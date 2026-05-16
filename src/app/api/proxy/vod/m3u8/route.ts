@@ -49,7 +49,6 @@ export async function GET(request: Request) {
     response = await fetch(decodedUrl, {
       cache: 'no-cache',
       redirect: 'follow',
-      credentials: 'same-origin',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': decodedUrl,
@@ -125,11 +124,10 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, sour
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i].trim();
 
-    // 处理 TS 片段 URL 和其他媒体文件
+    // 处理 TS 片段 URL 和其他媒体文件：直接升级 http→https，让浏览器绕过 Workers 直连 CDN
     if (line && !line.startsWith('#')) {
       const resolvedUrl = resolveUrl(baseUrl, line);
-      const proxyUrl = `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}&source=${source}`;
-      rewrittenLines.push(proxyUrl);
+      rewrittenLines.push(resolvedUrl.replace(/^http:\/\//, 'https://'));
       continue;
     }
 

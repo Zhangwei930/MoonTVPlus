@@ -32,7 +32,6 @@ export async function GET(request: Request) {
     response = await fetch(decodedUrl, {
       cache: 'no-cache',
       redirect: 'follow',
-      credentials: 'same-origin',
       headers: {
         'User-Agent': ua,
       },
