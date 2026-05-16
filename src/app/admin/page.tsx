@@ -6659,6 +6659,52 @@ const VideoSourceConfig = ({
     });
   };
 
+  // 禁用失效源
+  const handleDisableInvalidSources = async () => {
+    const invalidKeys = validationResults
+      .filter((r) => r.status === 'invalid' || r.status === 'no_results')
+      .map((r) => r.key);
+
+    if (invalidKeys.length === 0) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: '禁用失效源',
+      message: `确定要禁用检测到的 ${invalidKeys.length} 个失效视频源吗？`,
+      onConfirm: async () => {
+        try {
+          await withLoading('batchSource_batch_disable', () =>
+            callSourceApi({ action: 'batch_disable', keys: invalidKeys })
+          );
+          showAlert({
+            type: 'success',
+            title: '操作成功',
+            message: `已禁用 ${invalidKeys.length} 个失效视频源`,
+            timer: 2000,
+          });
+        } catch (err) {
+          showError(err instanceof Error ? err.message : '操作失败', showAlert);
+        }
+        setConfirmModal({
+          isOpen: false,
+          title: '',
+          message: '',
+          onConfirm: () => {},
+          onCancel: () => {},
+        });
+      },
+      onCancel: () => {
+        setConfirmModal({
+          isOpen: false,
+          title: '',
+          message: '',
+          onConfirm: () => {},
+          onCancel: () => {},
+        });
+      },
+    });
+  };
+
   if (!config) {
     return (
       <div className='text-center text-gray-500 dark:text-gray-400'>
@@ -6737,6 +6783,24 @@ const VideoSourceConfig = ({
               <Settings size={14} />
               <span>权重设置</span>
             </button>
+            {!isValidating &&
+              validationResults.some(
+                (r) => r.status === 'invalid' || r.status === 'no_results'
+              ) && (
+                <button
+                  onClick={handleDisableInvalidSources}
+                  disabled={isLoading('batchSource_batch_disable')}
+                  className={`px-3 py-1 text-sm rounded-lg transition-colors flex shrink-0 items-center space-x-1 whitespace-nowrap ${
+                    isLoading('batchSource_batch_disable')
+                      ? buttonStyles.disabled
+                      : buttonStyles.warning
+                  }`}
+                >
+                  {isLoading('batchSource_batch_disable')
+                    ? '禁用中...'
+                    : `禁用失效源 (${validationResults.filter((r) => r.status === 'invalid' || r.status === 'no_results').length})`}
+                </button>
+              )}
             <button
               onClick={() => setShowValidationModal(true)}
               disabled={isValidating}
@@ -14508,7 +14572,7 @@ const AIConfigComponent = ({
               value={defaultMessageNoVideo}
               onChange={(e) => setDefaultMessageNoVideo(e.target.value)}
               rows={3}
-              placeholder='例如：你好！我是MoonTVPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？'
+              placeholder='例如：你好！我是MagiesTvPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？'
               className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
             />
             <p className='mt-2 text-sm text-gray-600 dark:text-gray-400'>
