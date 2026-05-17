@@ -38,6 +38,7 @@ export default function MovieRequestPage() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searchResults, setSearchResults] = useState<TMDBResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [showSeasonDialog, setShowSeasonDialog] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TMDBResult | null>(null);
   const [seasons, setSeasons] = useState<Array<{ season_number: number; name: string; poster_path?: string | null }>>([]);
@@ -54,6 +55,15 @@ export default function MovieRequestPage() {
   const [submitting, setSubmitting] = useState(false);
   const [isFeatureEnabled, setIsFeatureEnabled] = useState(true);
 
+  useEffect(() => {
+    const keyword = new URLSearchParams(window.location.search)
+      .get('keyword')
+      ?.trim();
+    if (keyword) {
+      setSearchKeyword(keyword);
+    }
+  }, []);
+
   // 检查求片功能是否启用
   useEffect(() => {
     const runtimeConfig = (window as any).RUNTIME_CONFIG;
@@ -66,6 +76,7 @@ export default function MovieRequestPage() {
   const handleSearch = async () => {
     if (!searchKeyword.trim()) return;
 
+    setHasSearched(true);
     setIsSearching(true);
     try {
       const response = await fetch(`/api/tmdb/search?query=${encodeURIComponent(searchKeyword)}`);
@@ -340,7 +351,7 @@ export default function MovieRequestPage() {
               </div>
             ))}
           </div>
-        ) : searchKeyword && !isSearching ? (
+        ) : hasSearched && searchKeyword && !isSearching ? (
           <div className='text-center py-12 text-gray-500 dark:text-gray-400'>
             未找到相关影片
           </div>

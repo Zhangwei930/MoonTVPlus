@@ -3,6 +3,13 @@
 import { X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+import {
+  type NotificationCategory,
+  type NotificationChannel,
+  type NotificationPreferences,
+  NOTIFICATION_CATEGORIES,
+} from '@/lib/notification-preferences';
+
 interface EmailSettingsPanelProps {
   isOpen: boolean;
   mounted: boolean;
@@ -11,6 +18,12 @@ interface EmailSettingsPanelProps {
   onUserEmailChange: (value: string) => void;
   emailNotifications: boolean;
   onEmailNotificationsChange: (value: boolean) => void;
+  notificationPreferences: NotificationPreferences;
+  onNotificationPreferenceChange: (
+    channel: NotificationChannel,
+    category: NotificationCategory,
+    value: boolean
+  ) => void;
   emailSettingsLoading: boolean;
   emailSettingsSaving: boolean;
   onSave: () => void;
@@ -26,6 +39,8 @@ export function EmailSettingsPanel({
   onUserEmailChange,
   emailNotifications,
   onEmailNotificationsChange,
+  notificationPreferences,
+  onNotificationPreferenceChange,
   emailSettingsLoading,
   emailSettingsSaving,
   onSave,
@@ -99,17 +114,21 @@ export function EmailSettingsPanel({
               <div className='flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg'>
                 <div>
                   <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
-                    接收收藏更新通知
+                    邮件通知总开关
                   </h4>
                   <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                    当收藏的影片有更新时发送邮件通知
+                    关闭后不会发送邮件通知
                   </p>
                 </div>
                 <button
-                  onClick={() => onEmailNotificationsChange(!emailNotifications)}
+                  onClick={() =>
+                    onEmailNotificationsChange(!emailNotifications)
+                  }
                   disabled={emailSettingsSaving}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                    emailNotifications ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'
+                    emailNotifications
+                      ? 'bg-blue-600'
+                      : 'bg-gray-200 dark:bg-gray-700'
                   }`}
                 >
                   <span
@@ -118,6 +137,62 @@ export function EmailSettingsPanel({
                     }`}
                   />
                 </button>
+              </div>
+
+              <div className='rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden'>
+                <div className='grid grid-cols-[1fr_4rem_4rem] gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400'>
+                  <span>通知类型</span>
+                  <span className='text-center'>站内</span>
+                  <span className='text-center'>邮件</span>
+                </div>
+                <div className='divide-y divide-gray-100 dark:divide-gray-700'>
+                  {NOTIFICATION_CATEGORIES.map((category) => (
+                    <div
+                      key={category.key}
+                      className='grid grid-cols-[1fr_4rem_4rem] gap-2 px-3 py-3 items-center'
+                    >
+                      <div>
+                        <div className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                          {category.label}
+                        </div>
+                        <div className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                          {category.description}
+                        </div>
+                      </div>
+                      {(['site', 'email'] as NotificationChannel[]).map(
+                        (channel) => (
+                          <button
+                            key={channel}
+                            onClick={() =>
+                              onNotificationPreferenceChange(
+                                channel,
+                                category.key,
+                                !notificationPreferences[channel][category.key]
+                              )
+                            }
+                            disabled={
+                              emailSettingsSaving ||
+                              (channel === 'email' && !emailNotifications)
+                            }
+                            className={`mx-auto relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              notificationPreferences[channel][category.key]
+                                ? 'bg-blue-600'
+                                : 'bg-gray-200 dark:bg-gray-700'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                notificationPreferences[channel][category.key]
+                                  ? 'translate-x-6'
+                                  : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        )
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <button

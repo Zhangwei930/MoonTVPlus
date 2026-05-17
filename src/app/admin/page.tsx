@@ -37,7 +37,9 @@ import {
   ExternalLink,
   FileText,
   FolderOpen,
+  Gauge,
   Globe,
+  ListChecks,
   Mail,
   Palette,
   Plus,
@@ -69,6 +71,8 @@ import {
   FEATURE_PERMISSION_OPTIONS,
 } from '@/lib/feature-permissions';
 
+import AdminHealthPanel from '@/components/AdminHealthPanel';
+import AdminTaskPanel from '@/components/AdminTaskPanel';
 import AnimeSubscriptionComponent from '@/components/AnimeSubscriptionComponent';
 import CorrectDialog from '@/components/CorrectDialog';
 import DataMigration from '@/components/DataMigration';
@@ -16116,6 +16120,8 @@ function AdminPageClient() {
   const [role, setRole] = useState<'owner' | 'admin' | null>(null);
   const [showResetConfigModal, setShowResetConfigModal] = useState(false);
   const [expandedTabs, setExpandedTabs] = useState<{ [key: string]: boolean }>({
+    health: true,
+    taskCenter: true,
     userConfig: false,
     videoSource: false,
     sourceScriptLab: false,
@@ -16415,6 +16421,31 @@ function AdminPageClient() {
               </div>
             </div>
           )}
+
+          <CollapsibleTab
+            title='站点体检'
+            icon={
+              <Gauge size={20} className='text-gray-600 dark:text-gray-400' />
+            }
+            isExpanded={expandedTabs.health}
+            onToggle={() => toggleTab('health')}
+          >
+            <AdminHealthPanel />
+          </CollapsibleTab>
+
+          <CollapsibleTab
+            title='任务中心'
+            icon={
+              <ListChecks
+                size={20}
+                className='text-gray-600 dark:text-gray-400'
+              />
+            }
+            isExpanded={expandedTabs.taskCenter}
+            onToggle={() => toggleTab('taskCenter')}
+          >
+            <AdminTaskPanel />
+          </CollapsibleTab>
 
           {/* 配置文件标签 - 仅站长可见 */}
           {role === 'owner' && (

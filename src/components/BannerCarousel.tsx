@@ -377,7 +377,7 @@ export default function BannerCarousel({ autoPlayInterval = 5000, delayLoad = fa
       <div className="relative w-full h-[200px] sm:h-[300px] md:h-[400px] lg:h-[500px] bg-gradient-to-b from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-900 overflow-hidden flex items-center justify-center">
         <Image
           src="/logo.png"
-          alt="MoonTVPlus"
+          alt="MagiesTvPlus"
           width={120}
           height={120}
           className="opacity-50"

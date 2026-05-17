@@ -48,3 +48,14 @@ export function getProgress(username: string, operation: 'export' | 'import') {
   const progressKey = `${username}:${operation}`;
   return progressStore.get(progressKey);
 }
+
+export function getAllProgress() {
+  return Array.from(progressStore.entries()).map(([key, value]) => {
+    const [, operation] = key.split(':');
+    return {
+      key,
+      operation: operation as 'export' | 'import',
+      ...value,
+    };
+  });
+}

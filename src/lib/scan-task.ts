@@ -44,6 +44,11 @@ export function getScanTask(id: string): ScanTask | null {
   return tasks.get(id) || null;
 }
 
+export function getAllScanTasks(): ScanTask[] {
+  cleanupOldTasks();
+  return Array.from(tasks.values());
+}
+
 export function updateScanTaskProgress(
   id: string,
   current: number,

@@ -20,6 +20,10 @@ import {
   setLastGlobalLiveRefreshTime,
 } from '@/lib/live';
 import { MangaChapter, MangaShelfItem } from '@/lib/manga.types';
+import {
+  canDeliverNotification,
+  getUserNotificationPreferences,
+} from '@/lib/notification-preferences';
 import { startOpenListRefresh } from '@/lib/openlist-refresh';
 import { getSuwayomiConfig, loginWithSimpleAuth, SuwayomiClient } from '@/lib/suwayomi.client';
 import { SearchResult } from '@/lib/types';
@@ -594,17 +598,23 @@ async function refreshRecordAndFavorites() {
           (async () => {
             try {
               const userEmail = storage.getUserEmail ? await storage.getUserEmail(user) : null;
-              const emailNotifications = storage.getEmailNotificationPreference
-                ? await storage.getEmailNotificationPreference(user)
-                : false;
+              const notificationPreferences =
+                await getUserNotificationPreferences(storage, user);
 
-              if (userEmail && emailNotifications) {
+              if (
+                userEmail &&
+                canDeliverNotification(
+                  'favorite_update',
+                  'email',
+                  notificationPreferences
+                )
+              ) {
                 const config = await getConfig();
                 const emailConfig = config?.EmailConfig;
 
                 if (emailConfig?.enabled) {
                   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-                  const siteName = config?.SiteConfig?.SiteName || 'MoonTVPlus';
+                  const siteName = config?.SiteConfig?.SiteName || 'MagiesTvPlus';
 
                   await EmailService.send(emailConfig, {
                     to: userEmail,
@@ -741,17 +751,23 @@ async function refreshRecordAndFavorites() {
           (async () => {
             try {
               const userEmail = storage.getUserEmail ? await storage.getUserEmail(user) : null;
-              const emailNotifications = storage.getEmailNotificationPreference
-                ? await storage.getEmailNotificationPreference(user)
-                : false;
+              const notificationPreferences =
+                await getUserNotificationPreferences(storage, user);
 
-              if (userEmail && emailNotifications) {
+              if (
+                userEmail &&
+                canDeliverNotification(
+                  'manga_update',
+                  'email',
+                  notificationPreferences
+                )
+              ) {
                 const config = await getConfig();
                 const emailConfig = config?.EmailConfig;
 
                 if (emailConfig?.enabled) {
                   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-                  const siteName = config?.SiteConfig?.SiteName || 'MoonTVPlus';
+                  const siteName = config?.SiteConfig?.SiteName || 'MagiesTvPlus';
 
                   await EmailService.send(emailConfig, {
                     to: userEmail,

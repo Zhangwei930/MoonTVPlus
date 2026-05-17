@@ -62,7 +62,7 @@ function HomeClient() {
   const [showHttpWarning, setShowHttpWarning] = useState(true);
   const [showAIChat, setShowAIChat] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(false);
-  const [aiDefaultMessageNoVideo, setAiDefaultMessageNoVideo] = useState('你好！我是MoonTVPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？');
+  const [aiDefaultMessageNoVideo, setAiDefaultMessageNoVideo] = useState('你好！我是MagiesTvPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？');
   const [sourceSearchEnabled, setSourceSearchEnabled] = useState(true);
   const [musicEnabled, setMusicEnabled] = useState(false);
   const [mangaEnabled, setMangaEnabled] = useState(false);

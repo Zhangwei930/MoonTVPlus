@@ -38,6 +38,12 @@ import { createPortal } from 'react-dom';
 
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import { clearAllDanmakuCache, getDanmakuCacheStats } from '@/lib/danmaku/api';
+import {
+  type NotificationCategory,
+  type NotificationChannel,
+  type NotificationPreferences,
+  normalizeNotificationPreferences,
+} from '@/lib/notification-preferences';
 import { CURRENT_VERSION } from '@/lib/version';
 import { UpdateStatus } from '@/lib/version_check';
 
@@ -156,6 +162,10 @@ export const UserMenu: React.FC = () => {
   const [emailSettingsMessageType, setEmailSettingsMessageType] = useState<
     'success' | 'error' | null
   >(null);
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<NotificationPreferences>(() =>
+      normalizeNotificationPreferences(null)
+    );
 
   // 设备管理状态
   const [devices, setDevices] = useState<any[]>([]);
@@ -662,10 +672,24 @@ export const UserMenu: React.FC = () => {
     setEmailSettingsMessageType(null);
     try {
       const response = await fetch('/api/user/email-settings');
+      let legacyEmailNotifications = false;
       if (response.ok) {
         const data = await response.json();
         setUserEmail(data.email || '');
-        setEmailNotifications(data.emailNotifications || false);
+        legacyEmailNotifications = data.emailNotifications || false;
+        setEmailNotifications(legacyEmailNotifications);
+      }
+      const preferencesResponse = await fetch(
+        '/api/user/notification-preferences'
+      );
+      if (preferencesResponse.ok) {
+        const data = await preferencesResponse.json();
+        setNotificationPreferences(
+          normalizeNotificationPreferences(
+            data.preferences,
+            legacyEmailNotifications
+          )
+        );
       }
     } catch (error) {
       console.error('加载邮件设置失败:', error);
@@ -688,8 +712,18 @@ export const UserMenu: React.FC = () => {
           emailNotifications,
         }),
       });
+      const preferencesResponse = await fetch(
+        '/api/user/notification-preferences',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            preferences: notificationPreferences,
+          }),
+        }
+      );
 
-      if (response.ok) {
+      if (response.ok && preferencesResponse.ok) {
         setEmailSettingsMessage('保存成功！');
         setEmailSettingsMessageType('success');
         setTimeout(() => {
@@ -697,7 +731,9 @@ export const UserMenu: React.FC = () => {
           setEmailSettingsMessageType(null);
         }, 3000);
       } else {
-        const data = await response.json();
+        const data = response.ok
+          ? await preferencesResponse.json()
+          : await response.json();
         setEmailSettingsMessage(data.error || '保存失败');
         setEmailSettingsMessageType('error');
       }
@@ -708,6 +744,20 @@ export const UserMenu: React.FC = () => {
     } finally {
       setEmailSettingsSaving(false);
     }
+  };
+
+  const handleNotificationPreferenceChange = (
+    channel: NotificationChannel,
+    category: NotificationCategory,
+    value: boolean
+  ) => {
+    setNotificationPreferences((prev) => ({
+      ...prev,
+      [channel]: {
+        ...prev[channel],
+        [category]: value,
+      },
+    }));
   };
 
   // 加载设备列表
@@ -3555,13 +3605,13 @@ export const UserMenu: React.FC = () => {
           {/* 应用列表 */}
           <div className='flex-1 overflow-y-auto p-6'>
             <div className='grid gap-6 md:grid-cols-1'>
-              {/* MoonTVPlus-PC 客户端 */}
+              {/* MagiesTvPlus-PC 客户端 */}
               <div className='bg-gray-50 dark:bg-gray-800 rounded-lg p-5 border border-gray-200 dark:border-gray-700'>
                 <div className='flex items-start gap-4'>
                   <div className='flex-shrink-0 relative'>
                     <img
                       src='/logo.png'
-                      alt='MoonTVPlus-PC'
+                      alt='MagiesTvPlus-PC'
                       className='w-16 h-16 rounded-xl object-cover'
                     />
                     <div className='absolute -bottom-1 -right-1 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center shadow-lg'>
@@ -3570,7 +3620,7 @@ export const UserMenu: React.FC = () => {
                   </div>
                   <div className='flex-1 min-w-0'>
                     <h4 className='text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2'>
-                      MoonTVPlus-PC客户端
+                      MagiesTvPlus-PC客户端
                     </h4>
                     <p className='text-sm text-gray-600 dark:text-gray-400 mb-3'>
                       专为Windows开发的客户端，完美支持私人影库mkv视频
@@ -3823,6 +3873,8 @@ export const UserMenu: React.FC = () => {
         onUserEmailChange={setUserEmail}
         emailNotifications={emailNotifications}
         onEmailNotificationsChange={setEmailNotifications}
+        notificationPreferences={notificationPreferences}
+        onNotificationPreferenceChange={handleNotificationPreferenceChange}
         emailSettingsLoading={emailSettingsLoading}
         emailSettingsSaving={emailSettingsSaving}
         onSave={handleSaveEmailSettings}

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getStorage } from '@/lib/db';
+import {
+  filterNotificationsByPreferences,
+  getUserNotificationPreferences,
+} from '@/lib/notification-preferences';
 
 export const runtime = 'nodejs';
 
@@ -15,10 +19,20 @@ export async function GET(request: NextRequest) {
   try {
     const storage = getStorage();
     const notifications = await storage.getNotifications(authInfo.username);
-    const unreadCount = await storage.getUnreadNotificationCount(authInfo.username);
+    const preferences = await getUserNotificationPreferences(
+      storage,
+      authInfo.username
+    );
+    const visibleNotifications = filterNotificationsByPreferences(
+      notifications,
+      preferences
+    );
+    const unreadCount = visibleNotifications.filter(
+      (notification) => !notification.read
+    ).length;
 
     return NextResponse.json({
-      notifications,
+      notifications: visibleNotifications,
       unreadCount,
     });
   } catch (error) {

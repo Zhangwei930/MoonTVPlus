@@ -2,6 +2,7 @@
 'use client';
 
 import {
+  Bot,
   ChevronUp,
   Film,
   Grid2x2,
@@ -30,10 +31,15 @@ import {
   getSearchHistory,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import {
+  buildSearchEmptyActions,
+  SearchEmptyAction,
+} from '@/lib/search-empty-actions';
 import { SearchResult } from '@/lib/types';
 import { processImageUrl } from '@/lib/utils';
 
 import AcgSearch from '@/components/AcgSearch';
+import AIChatPanel from '@/components/AIChatPanel';
 import CapsuleSwitch from '@/components/CapsuleSwitch';
 import ImageViewer from '@/components/ImageViewer';
 import PageLayout from '@/components/PageLayout';
@@ -65,6 +71,13 @@ function SearchPageClient() {
   );
   const [netdiskSearchEnabled, setNetdiskSearchEnabled] = useState(false);
   const [magnetSearchEnabled, setMagnetSearchEnabled] = useState(false);
+  const [movieRequestEnabled, setMovieRequestEnabled] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiDefaultMessageNoVideo, setAiDefaultMessageNoVideo] = useState(
+    '你好！我是MagiesTvPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？'
+  );
+  const [showAIChat, setShowAIChat] = useState(false);
+  const [isAIStreaming, setIsAIStreaming] = useState(false);
   // 繁体转简体转换器
   const converterRef = useRef<((text: string) => string) | null>(null);
   // 转换器是否已初始化
@@ -755,6 +768,24 @@ function SearchPageClient() {
     aggregatedResults.length,
     allExactSearchResults.length,
   ]);
+  const emptySearchQuery = submittedSearchQuery || searchQuery.trim();
+  const searchEmptyActions = useMemo(
+    () =>
+      buildSearchEmptyActions({
+        query: emptySearchQuery,
+        movieRequestEnabled,
+        netdiskSearchEnabled,
+        magnetSearchEnabled,
+        aiEnabled,
+      }),
+    [
+      emptySearchQuery,
+      movieRequestEnabled,
+      netdiskSearchEnabled,
+      magnetSearchEnabled,
+      aiEnabled,
+    ]
+  );
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -964,13 +995,18 @@ function SearchPageClient() {
   useEffect(() => {
     // 获取用户权限
     const authInfo = getAuthInfoFromBrowserCookie();
+    const runtimeConfig = (window as any).RUNTIME_CONFIG || {};
     setUserRole(authInfo?.role || null);
-    setNetdiskSearchEnabled(
-      !!(window as any).RUNTIME_CONFIG?.NETDISK_SEARCH_ENABLED
+    setNetdiskSearchEnabled(!!runtimeConfig.NETDISK_SEARCH_ENABLED);
+    setMagnetSearchEnabled(!!runtimeConfig.MAGNET_SEARCH_ENABLED);
+    setMovieRequestEnabled(runtimeConfig.ENABLE_MOVIE_REQUEST !== false);
+    setAiEnabled(
+      !!runtimeConfig.AI_ENABLED && !!runtimeConfig.AI_ENABLE_HOMEPAGE_ENTRY
     );
-    setMagnetSearchEnabled(
-      !!(window as any).RUNTIME_CONFIG?.MAGNET_SEARCH_ENABLED
-    );
+
+    if (runtimeConfig.AI_DEFAULT_MESSAGE_NO_VIDEO) {
+      setAiDefaultMessageNoVideo(runtimeConfig.AI_DEFAULT_MESSAGE_NO_VIDEO);
+    }
 
     // 初始化繁体转简体转换器
     if (typeof window !== 'undefined') {
@@ -1514,6 +1550,43 @@ function SearchPageClient() {
     }
   };
 
+  const renderSearchEmptyActionIcon = (id: SearchEmptyAction['id']) => {
+    switch (id) {
+      case 'movie-request':
+        return <Film className='h-4 w-4' />;
+      case 'pansou':
+        return <HardDrive className='h-4 w-4' />;
+      case 'acg':
+        return <Magnet className='h-4 w-4' />;
+      case 'ai':
+        return <Bot className='h-4 w-4' />;
+    }
+  };
+
+  const handleSearchEmptyAction = (action: SearchEmptyAction) => {
+    if (!action.enabled) return;
+
+    const query = emptySearchQuery.trim();
+    if (action.href) {
+      router.push(action.href);
+      return;
+    }
+
+    if (action.targetTab) {
+      setSearchQuery(query);
+      setShowResults(true);
+      setActiveTab(action.targetTab);
+      router.push(
+        `/search?q=${encodeURIComponent(query)}&type=${action.targetTab}`
+      );
+      return;
+    }
+
+    if (action.id === 'ai') {
+      setShowAIChat(true);
+    }
+  };
+
   return (
     <PageLayout activePath='/search'>
       <div className='px-4 sm:px-10 py-4 sm:py-8 overflow-visible mb-10'>
@@ -1744,8 +1817,41 @@ function SearchPageClient() {
                         <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-green-500'></div>
                       </div>
                     ) : (
-                      <div className='text-center text-gray-500 py-8 dark:text-gray-400'>
-                        未找到相关结果
+                      <div className='py-8 text-center text-gray-500 dark:text-gray-400'>
+                        <p>未找到相关结果</p>
+                        {searchEmptyActions.length > 0 && (
+                          <div className='mx-auto mt-4 max-w-2xl rounded-lg border border-gray-200 bg-white/80 p-4 text-left shadow-sm dark:border-gray-700 dark:bg-gray-900/70'>
+                            <div className='mb-3'>
+                              <p className='text-sm font-medium text-gray-800 dark:text-gray-100'>
+                                可以继续尝试
+                              </p>
+                              <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+                                当前关键词：{emptySearchQuery}
+                              </p>
+                            </div>
+                            <div className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
+                              {searchEmptyActions.map((action) => (
+                                <button
+                                  key={action.id}
+                                  type='button'
+                                  onClick={() =>
+                                    handleSearchEmptyAction(action)
+                                  }
+                                  disabled={!action.enabled}
+                                  title={
+                                    action.enabled
+                                      ? action.description
+                                      : action.disabledReason
+                                  }
+                                  className='inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:border-green-300 hover:bg-green-50 hover:text-green-700 disabled:cursor-not-allowed disabled:opacity-45 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-green-700 dark:hover:bg-green-900/30 dark:hover:text-green-300'
+                                >
+                                  {renderSearchEmptyActionIcon(action.id)}
+                                  <span>{action.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   ) : (
@@ -2015,6 +2121,20 @@ function SearchPageClient() {
           ) : null}
         </div>
       </div>
+
+      {aiEnabled && (showAIChat || isAIStreaming) && (
+        <AIChatPanel
+          isOpen={showAIChat}
+          onClose={() => setShowAIChat(false)}
+          context={emptySearchQuery ? { title: emptySearchQuery } : undefined}
+          welcomeMessage={
+            emptySearchQuery
+              ? `没搜到《${emptySearchQuery}》。可以让我帮你换关键词、判断片名或找相近资源。`
+              : aiDefaultMessageNoVideo
+          }
+          onStreamingChange={setIsAIStreaming}
+        />
+      )}
 
       {previewImage && (
         <ImageViewer
