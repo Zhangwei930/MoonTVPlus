@@ -518,6 +518,7 @@ interface UserConfigProps {
   userTotal: number;
   fetchUsersV2: (page: number) => Promise<void>;
   userListLoading: boolean;
+  onlineUsers: Set<string>;
 }
 
 const UserConfig = ({
@@ -530,6 +531,7 @@ const UserConfig = ({
   userTotal,
   fetchUsersV2,
   userListLoading,
+  onlineUsers,
 }: UserConfigProps) => {
   const { alertModal, showAlert, hideAlert } = useAlertModal();
   const { isLoading, withLoading } = useLoadingState();
@@ -1590,6 +1592,23 @@ const UserConfig = ({
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100'>
                             <div className='flex items-center gap-2'>
+                              <span
+                                className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
+                                  onlineUsers.has(user.username)
+                                    ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]'
+                                    : 'bg-gray-300 dark:bg-gray-600'
+                                }`}
+                                title={
+                                  onlineUsers.has(user.username)
+                                    ? '在线'
+                                    : '离线'
+                                }
+                                aria-label={
+                                  onlineUsers.has(user.username)
+                                    ? '在线'
+                                    : '离线'
+                                }
+                              />
                               <span>{user.username}</span>
                               {user.oidcSub && (
                                 <span className='px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'>
@@ -16245,6 +16264,42 @@ function AdminPageClient() {
     }
   };
 
+  // 在线状态：用户管理选项卡展开时每 30 秒拉一次活跃快照
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!expandedTabs.userConfig) return;
+
+    let cancelled = false;
+    const fetchActivity = async () => {
+      try {
+        const resp = await fetch('/api/admin/user/activity');
+        if (!resp.ok) return;
+        const data = (await resp.json()) as {
+          serverTime: number;
+          onlineThresholdMs: number;
+          activity: Record<string, number>;
+        };
+        if (cancelled) return;
+        const cutoff = data.serverTime - data.onlineThresholdMs;
+        const next = new Set<string>();
+        Object.entries(data.activity).forEach(([name, ts]) => {
+          if (ts >= cutoff) next.add(name);
+        });
+        setOnlineUsers(next);
+      } catch {
+        // 网络抖动忽略，下个 tick 重试
+      }
+    };
+
+    fetchActivity();
+    const interval = setInterval(fetchActivity, 30 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [expandedTabs.userConfig]);
+
   // 新增: 重置配置处理函数
   const handleResetConfig = () => {
     setShowResetConfigModal(true);
@@ -16532,6 +16587,7 @@ function AdminPageClient() {
                 userTotal={userTotal}
                 fetchUsersV2={fetchUsersV2}
                 userListLoading={userListLoading}
+                onlineUsers={onlineUsers}
               />
             </CollapsibleTab>
 
