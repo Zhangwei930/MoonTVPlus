@@ -121,6 +121,12 @@ function LivePageClient() {
   const [videoUrl, setVideoUrl] = useState('');
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [unsupportedType, setUnsupportedType] = useState<string | null>(null);
+  // 服务器转码：sourceUrl 匹配当前 videoUrl 时启用 playlistUrl
+  const [transcodedSession, setTranscodedSession] = useState<{
+    sourceUrl: string;
+    playlistUrl: string;
+  } | null>(null);
+  const [isTranscoding, setIsTranscoding] = useState(false);
 
   // 切换直播源状态
   const [isSwitchingSource, setIsSwitchingSource] = useState(false);
@@ -610,6 +616,38 @@ function LivePageClient() {
       // 如果没有 tvgId 或 source，清空 EPG 数据
       setEpgData(null);
       setIsEpgLoading(false);
+    }
+  };
+
+  // 点击 "服务器转码播放" 后启动 ffmpeg 转码会话
+  const handleTranscodeClick = async () => {
+    if (!videoUrl || isTranscoding) return;
+    setIsTranscoding(true);
+    try {
+      const resp = await fetch('/api/transcode/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: videoUrl,
+          source: currentSourceRef.current?.key || '',
+        }),
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => ({}));
+        throw new Error(detail.error || `HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as { playlistUrl?: string };
+      if (!data.playlistUrl) {
+        throw new Error('转码服务未返回播放地址');
+      }
+      cleanupPlayer();
+      setUnsupportedType(null);
+      setIsVideoLoading(true);
+      setTranscodedSession({ sourceUrl: videoUrl, playlistUrl: data.playlistUrl });
+    } catch (err) {
+      alert(`转码启动失败：${err instanceof Error ? err.message : '未知错误'}`);
+    } finally {
+      setIsTranscoding(false);
     }
   };
 
@@ -1422,6 +1460,12 @@ function LivePageClient() {
         super(config);
         const load = this.load.bind(this);
         this.load = function (context: any, config: any, callbacks: any) {
+          // 服务器转码 URL 不需要任何重写，直连本地路由
+          if (typeof context.url === 'string' && context.url.includes('/api/transcode/')) {
+            load(context, config, callbacks);
+            return;
+          }
+
           // 判断当前直播源的代理模式
           const currentLiveSource = currentSourceRef.current;
           const proxyMode = currentLiveSource?.proxyMode || 'full';
@@ -1588,9 +1632,13 @@ function LivePageClient() {
       // precheck type
       let type = 'm3u8';
       const proxyMode = currentSourceRef.current?.proxyMode || 'full';
+      const transcodedPlaylistUrl =
+        transcodedSession && transcodedSession.sourceUrl === videoUrl
+          ? transcodedSession.playlistUrl
+          : null;
 
-      // 直连模式：跳过服务器预检查，直接使用 m3u8
-      if (proxyMode === 'direct') {
+      // 转码或直连模式：跳过服务器预检查
+      if (transcodedPlaylistUrl || proxyMode === 'direct') {
         type = 'm3u8';
       } else {
         // 全量代理或仅代理m3u8：通过服务器预检查
@@ -1632,7 +1680,10 @@ function LivePageClient() {
       // 根据代理模式决定 URL
       let targetUrl = videoUrl;
       if (type === 'm3u8') {
-        if (proxyMode === 'direct') {
+        if (transcodedPlaylistUrl) {
+          // 服务器转码模式：直接用转码后的本地播放清单
+          targetUrl = transcodedPlaylistUrl;
+        } else if (proxyMode === 'direct') {
           // 直连模式：直接使用原始 URL
           targetUrl = videoUrl;
         } else {
@@ -1813,7 +1864,7 @@ function LivePageClient() {
       }
     }
     preload();
-  }, [Artplayer, Hls, videoUrl, currentChannel, loading]);
+  }, [Artplayer, Hls, videoUrl, currentChannel, loading, transcodedSession]);
 
   // 清理播放器资源
   useEffect(() => {
@@ -2114,6 +2165,16 @@ function LivePageClient() {
                         <p className='text-sm text-gray-300'>
                           请尝试其他频道或使用外部播放器
                         </p>
+                        {unsupportedType === 'H.265 (HEVC)' && (
+                          <button
+                            type='button'
+                            onClick={handleTranscodeClick}
+                            disabled={isTranscoding}
+                            className='mt-2 inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white text-sm font-medium shadow-lg transition-colors'
+                          >
+                            {isTranscoding ? '正在启动转码…' : '🔧 服务器转码后播放'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
