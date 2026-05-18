@@ -1510,9 +1510,20 @@ function LivePageClient() {
           case Hls.ErrorTypes.NETWORK_ERROR:
             hls.startLoad();
             break;
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            // hls.recoverMediaError();
+          case Hls.ErrorTypes.MEDIA_ERROR: {
+            const codecError = data.details === 'bufferIncompatibleCodecsError' ||
+              data.details === Hls.ErrorDetails?.BUFFER_INCOMPATIBLE_CODECS_ERROR ||
+              String(data.error?.message || '').toLowerCase().includes('codec') ||
+              String(data.error?.message || '').toLowerCase().includes('hevc') ||
+              String(data.error?.message || '').toLowerCase().includes('h.265');
+            if (codecError) {
+              setUnsupportedType('H.265 (HEVC)');
+              hls.destroy();
+            } else {
+              hls.recoverMediaError();
+            }
             break;
+          }
           default:
             hls.destroy();
             break;
@@ -2084,18 +2095,24 @@ function LivePageClient() {
                       </div>
                       <div className='space-y-4'>
                         <h3 className='text-xl font-semibold text-white'>
-                          暂不支持的直播流类型
+                          {unsupportedType === 'H.265 (HEVC)' ? '视频编码不受支持' : '暂不支持的直播流类型'}
                         </h3>
                         <div className='bg-orange-500/20 border border-orange-500/30 rounded-lg p-4'>
                           <p className='text-orange-300 font-medium'>
-                            当前频道直播流类型：<span className='text-white font-bold'>{unsupportedType.toUpperCase()}</span>
+                            {unsupportedType === 'H.265 (HEVC)'
+                              ? '该频道使用 H.265 (HEVC) 编码，浏览器不支持解码'
+                              : <>当前频道直播流类型：<span className='text-white font-bold'>{unsupportedType.toUpperCase()}</span></>
+                            }
                           </p>
                           <p className='text-sm text-orange-200 mt-2'>
-                            目前仅支持 M3U8 格式的直播流
+                            {unsupportedType === 'H.265 (HEVC)'
+                              ? '请使用右侧按钮在外部播放器（VLC、nPlayer、IINA 等）中打开'
+                              : '目前仅支持 M3U8 格式的直播流'
+                            }
                           </p>
                         </div>
                         <p className='text-sm text-gray-300'>
-                          请尝试其他频道
+                          请尝试其他频道或使用外部播放器
                         </p>
                       </div>
                     </div>

@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     const decodedUrl = decodeURIComponent(url);
     const upstream = await fetch(decodedUrl, {
       headers: { 'User-Agent': ua },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(25000),
     });
 
     if (!upstream.ok) {
