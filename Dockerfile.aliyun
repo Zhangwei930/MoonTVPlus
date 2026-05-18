@@ -1,6 +1,6 @@
 ARG NODE_VERSION=24.11.1
 
-FROM registry.cn-hangzhou.aliyuncs.com/acs/ubuntu:latest AS node-base
+FROM ubuntu:22.04 AS node-base
 ARG NODE_VERSION
 
 ENV PATH=/usr/local/lib/nodejs/bin:$PATH
