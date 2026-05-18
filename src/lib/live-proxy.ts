@@ -145,11 +145,15 @@ function buildLiveProxyUrl(
   proxyBase: string,
   path: 'm3u8' | 'segment' | 'key',
   targetUrl: string,
-  source: string
+  source: string,
+  allowCORS?: boolean
 ): string {
   const params = new URLSearchParams({ url: targetUrl });
   if (source) {
     params.set('moontv-source', source);
+  }
+  if (allowCORS) {
+    params.set('allowCORS', 'true');
   }
   return `${proxyBase}/${path}?${params.toString()}`;
 }
@@ -237,7 +241,7 @@ export function rewriteLiveM3U8Content(
         if (nextLine && !nextLine.startsWith('#')) {
           const resolvedUrl = resolveUrl(baseUrl, nextLine);
           rewrittenLines.push(
-            buildLiveProxyUrl(proxyBase, 'm3u8', resolvedUrl, source)
+            buildLiveProxyUrl(proxyBase, 'm3u8', resolvedUrl, source, allowCORS)
           );
         } else {
           rewrittenLines.push(nextLine);
