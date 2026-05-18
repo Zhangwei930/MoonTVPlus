@@ -166,7 +166,7 @@ function rewriteMapUri(
 
   const resolvedUrl = resolveUrl(baseUrl, uriMatch[1]);
   const nextUri = allowCORS
-    ? resolvedUrl
+    ? upgradeToHttps(resolvedUrl)
     : buildLiveProxyUrl(proxyBase, 'segment', resolvedUrl, source);
 
   return line.replace(uriMatch[0], `URI="${nextUri}"`);
@@ -184,10 +184,16 @@ function rewriteKeyUri(
 
   const resolvedUrl = resolveUrl(baseUrl, uriMatch[1]);
   const nextUri = allowCORS
-    ? resolvedUrl
+    ? upgradeToHttps(resolvedUrl)
     : buildLiveProxyUrl(proxyBase, 'key', resolvedUrl, source);
 
   return line.replace(uriMatch[0], `URI="${nextUri}"`);
+}
+
+// In m3u8-only (allowCORS) mode upgrade http segment URLs to https so the
+// browser can fetch them directly without mixed-content blocks.
+function upgradeToHttps(url: string): string {
+  return url.startsWith('http://') ? 'https://' + url.slice(7) : url;
 }
 
 export function rewriteLiveM3U8Content(
@@ -209,7 +215,7 @@ export function rewriteLiveM3U8Content(
       const resolvedUrl = resolveUrl(baseUrl, line);
       rewrittenLines.push(
         allowCORS
-          ? resolvedUrl
+          ? upgradeToHttps(resolvedUrl)
           : buildLiveProxyUrl(proxyBase, 'segment', resolvedUrl, source)
       );
       continue;

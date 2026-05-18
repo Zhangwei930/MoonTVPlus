@@ -41,7 +41,7 @@ describe('live proxy helpers', () => {
     );
   });
 
-  it('keeps media segments direct in m3u8-only mode', () => {
+  it('keeps media segments direct in m3u8-only mode and upgrades to https', () => {
     const request = makeRequest(
       'http://127.0.0.1:3000/api/proxy/m3u8?moontv-source=cn-main',
       {
@@ -52,7 +52,7 @@ describe('live proxy helpers', () => {
 
     const rewritten = rewriteLiveM3U8Content(
       ['#EXTM3U', '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"', '#EXTINF:8.00,', 'segment-001.ts'].join('\n'),
-      'https://origin.example.com/live/channel/',
+      'http://origin.example.com/live/channel/',
       request,
       true
     );
@@ -60,5 +60,6 @@ describe('live proxy helpers', () => {
     expect(rewritten).toContain('URI="https://origin.example.com/live/channel/key.bin"');
     expect(rewritten).toContain('https://origin.example.com/live/channel/segment-001.ts');
     expect(rewritten).not.toContain('/api/proxy/segment');
+    expect(rewritten).not.toContain('http://origin.example.com');
   });
 });
