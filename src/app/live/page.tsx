@@ -1546,13 +1546,52 @@ function LivePageClient() {
     hls.attachMedia(video);
     video.hls = hls;
 
+    // 主动检测 H.265/HEVC：HLS.js 解析出 codec 后立刻判定，避免黑屏静默失败
+    const flagAsHevc = (reason: string) => {
+      console.warn('[live] HEVC detected:', reason);
+      setUnsupportedType('H.265 (HEVC)');
+      try { hls.destroy(); } catch { /* ignore */ }
+    };
+
+    hls.on(Hls.Events.BUFFER_CODECS, function (_event: any, data: any) {
+      const videoCodec = String(data?.video?.codec || '').toLowerCase();
+      if (videoCodec && (videoCodec.startsWith('hvc') || videoCodec.startsWith('hev'))) {
+        flagAsHevc(`BUFFER_CODECS video=${videoCodec}`);
+      }
+    });
+
+    // 兜底：开播 5 秒后若有声音但 videoWidth 仍为 0，按 H.265 处理
+    const onPlaying = () => {
+      window.setTimeout(() => {
+        if (
+          !video.paused &&
+          video.currentTime > 0.5 &&
+          video.videoWidth === 0 &&
+          !unsupportedType
+        ) {
+          flagAsHevc(`black-screen heuristic currentTime=${video.currentTime}`);
+        }
+      }, 5000);
+    };
+    video.addEventListener('playing', onPlaying, { once: true });
+
+    let networkRetries = 0;
+    const MAX_NETWORK_RETRIES = 3;
+
     hls.on(Hls.Events.ERROR, function (event: any, data: any) {
       console.error('HLS Error:', event, data);
 
       if (data.fatal) {
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
-            hls.startLoad();
+            networkRetries += 1;
+            if (networkRetries > MAX_NETWORK_RETRIES) {
+              console.warn('[live] giving up after', networkRetries, 'network retries');
+              setUnsupportedType(`无法加载 (${data.details || 'network'})`);
+              try { hls.destroy(); } catch { /* ignore */ }
+            } else {
+              hls.startLoad();
+            }
             break;
           case Hls.ErrorTypes.MEDIA_ERROR: {
             const codecError = data.details === 'bufferIncompatibleCodecsError' ||
@@ -2145,27 +2184,42 @@ function LivePageClient() {
                         </div>
                       </div>
                       <div className='space-y-4'>
-                        <h3 className='text-xl font-semibold text-white'>
-                          {unsupportedType === 'H.265 (HEVC)' ? '视频编码不受支持' : '暂不支持的直播流类型'}
-                        </h3>
-                        <div className='bg-orange-500/20 border border-orange-500/30 rounded-lg p-4'>
-                          <p className='text-orange-300 font-medium'>
-                            {unsupportedType === 'H.265 (HEVC)'
-                              ? '该频道使用 H.265 (HEVC) 编码，浏览器不支持解码'
-                              : <>当前频道直播流类型：<span className='text-white font-bold'>{unsupportedType.toUpperCase()}</span></>
-                            }
-                          </p>
-                          <p className='text-sm text-orange-200 mt-2'>
-                            {unsupportedType === 'H.265 (HEVC)'
-                              ? '请使用右侧按钮在外部播放器（VLC、nPlayer、IINA 等）中打开'
-                              : '目前仅支持 M3U8 格式的直播流'
-                            }
-                          </p>
-                        </div>
+                        {(() => {
+                          const isHevc = unsupportedType === 'H.265 (HEVC)';
+                          const isNetwork = unsupportedType.startsWith('无法加载');
+                          const title = isHevc
+                            ? '视频编码不受支持'
+                            : isNetwork
+                              ? '直播源加载失败'
+                              : '暂不支持的直播流类型';
+                          const mainMsg = isHevc
+                            ? '该频道使用 H.265 (HEVC) 编码，浏览器不支持解码'
+                            : isNetwork
+                              ? `${unsupportedType}，重试 3 次后放弃`
+                              : null;
+                          const subMsg = isHevc
+                            ? '可点击下方"服务器转码后播放"或用外部播放器（VLC、nPlayer、IINA 等）打开'
+                            : isNetwork
+                              ? '该频道在服务器端可能已失效。可尝试服务器转码（部分挑剔的源 ffmpeg 能拉到）或换一个频道'
+                              : '目前仅支持 M3U8 格式的直播流';
+                          return (
+                            <>
+                              <h3 className='text-xl font-semibold text-white'>{title}</h3>
+                              <div className='bg-orange-500/20 border border-orange-500/30 rounded-lg p-4'>
+                                <p className='text-orange-300 font-medium'>
+                                  {mainMsg ?? (
+                                    <>当前频道直播流类型：<span className='text-white font-bold'>{unsupportedType.toUpperCase()}</span></>
+                                  )}
+                                </p>
+                                <p className='text-sm text-orange-200 mt-2'>{subMsg}</p>
+                              </div>
+                            </>
+                          );
+                        })()}
                         <p className='text-sm text-gray-300'>
                           请尝试其他频道或使用外部播放器
                         </p>
-                        {unsupportedType === 'H.265 (HEVC)' && (
+                        {(unsupportedType === 'H.265 (HEVC)' || unsupportedType.startsWith('无法加载')) && (
                           <button
                             type='button'
                             onClick={handleTranscodeClick}

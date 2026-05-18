@@ -34,6 +34,7 @@ export async function GET(request: Request) {
       headers: {
         'User-Agent': ua,
       },
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!response.ok) {
