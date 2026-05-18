@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 
 import { getConfig } from "@/lib/config";
-import { getBaseUrl, resolveUrl } from "@/lib/live";
+import { getBaseUrl, rewriteLiveM3U8Content } from "@/lib/live-proxy";
 
 export const runtime = 'nodejs';
 
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
       const baseUrl = getBaseUrl(finalUrl);
 
       // 重写 M3U8 内容
-      const modifiedContent = rewriteM3U8Content(m3u8Content, baseUrl, request, allowCORS);
+      const modifiedContent = rewriteLiveM3U8Content(m3u8Content, baseUrl, request, allowCORS);
 
       const headers = new Headers();
       headers.set('Content-Type', contentType);
@@ -91,94 +91,4 @@ export async function GET(request: Request) {
       }
     }
   }
-}
-
-function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allowCORS: boolean) {
-  // 从 referer 头提取协议信息
-  const referer = req.headers.get('referer');
-  let protocol = 'http';
-  if (referer) {
-    try {
-      const refererUrl = new URL(referer);
-      protocol = refererUrl.protocol.replace(':', '');
-    } catch (error) {
-      // ignore
-    }
-  }
-
-  const host = req.headers.get('host');
-  const proxyBase = `${protocol}://${host}/api/proxy`;
-
-  // 获取 moontv-source 参数
-  const reqUrl = new URL(req.url);
-  const source = reqUrl.searchParams.get('moontv-source') || '';
-
-  const lines = content.split('\n');
-  const rewrittenLines: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i].trim();
-
-    // 处理 TS 片段 URL 和其他媒体文件
-    if (line && !line.startsWith('#')) {
-      const resolvedUrl = resolveUrl(baseUrl, line);
-      const proxyUrl = allowCORS ? resolvedUrl : `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
-      rewrittenLines.push(proxyUrl);
-      continue;
-    }
-
-    // 处理 EXT-X-MAP 标签中的 URI
-    if (line.startsWith('#EXT-X-MAP:')) {
-      line = rewriteMapUri(line, baseUrl, proxyBase, allowCORS, source);
-    }
-
-    // 处理 EXT-X-KEY 标签中的 URI
-    if (line.startsWith('#EXT-X-KEY:')) {
-      line = rewriteKeyUri(line, baseUrl, proxyBase, allowCORS, source);
-    }
-
-    // 处理嵌套的 M3U8 文件 (EXT-X-STREAM-INF)
-    if (line.startsWith('#EXT-X-STREAM-INF:')) {
-      rewrittenLines.push(line);
-      // 下一行通常是 M3U8 URL
-      if (i + 1 < lines.length) {
-        i++;
-        const nextLine = lines[i].trim();
-        if (nextLine && !nextLine.startsWith('#')) {
-          const resolvedUrl = resolveUrl(baseUrl, nextLine);
-          const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
-          rewrittenLines.push(proxyUrl);
-        } else {
-          rewrittenLines.push(nextLine);
-        }
-      }
-      continue;
-    }
-
-    rewrittenLines.push(line);
-  }
-
-  return rewrittenLines.join('\n');
-}
-
-function rewriteMapUri(line: string, baseUrl: string, proxyBase: string, allowCORS: boolean, source: string) {
-  const uriMatch = line.match(/URI="([^"]+)"/);
-  if (uriMatch) {
-    const originalUri = uriMatch[1];
-    const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = allowCORS ? resolvedUrl : `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
-    return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
-  }
-  return line;
-}
-
-function rewriteKeyUri(line: string, baseUrl: string, proxyBase: string, allowCORS: boolean, source: string) {
-  const uriMatch = line.match(/URI="([^"]+)"/);
-  if (uriMatch) {
-    const originalUri = uriMatch[1];
-    const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = allowCORS ? resolvedUrl : `${proxyBase}/key?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
-    return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
-  }
-  return line;
 }

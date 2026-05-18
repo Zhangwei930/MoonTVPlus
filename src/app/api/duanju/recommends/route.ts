@@ -174,7 +174,7 @@ export async function GET() {
       return {
         id: item.vod_id.toString(),
         title: item.vod_name.trim().replace(/\s+/g, ' '),
-        poster: item.vod_pic,
+        poster: (item.vod_pic || '').replace(/^http:\/\//i, 'https://'),
         episodes,
         episodes_titles: titles,
         source: firstSource.key,

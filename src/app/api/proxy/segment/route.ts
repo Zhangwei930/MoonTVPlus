@@ -16,10 +16,7 @@ export async function GET(request: Request) {
 
   const config = await getConfig();
   const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
-  if (!liveSource) {
-    return NextResponse.json({ error: 'Source not found' }, { status: 404 });
-  }
-  const ua = liveSource.ua || 'AptvPlayer/1.4.10';
+  const ua = liveSource?.ua || 'AptvPlayer/1.4.10';
 
   let response: Response | null = null;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -44,6 +41,7 @@ export async function GET(request: Request) {
     headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
 
     // 使用流式传输，避免占用内存
+    let isCancelled = false;
     const stream = new ReadableStream({
       start(controller) {
         if (!response?.body) {
@@ -52,7 +50,6 @@ export async function GET(request: Request) {
         }
 
         reader = response.body.getReader();
-        const isCancelled = false;
 
         function pump() {
           if (isCancelled || !reader) {
@@ -94,7 +91,7 @@ export async function GET(request: Request) {
         pump();
       },
       cancel() {
-        // 当流被取消时，确保释放所有资源
+        isCancelled = true;
         if (reader) {
           try {
             reader.releaseLock();

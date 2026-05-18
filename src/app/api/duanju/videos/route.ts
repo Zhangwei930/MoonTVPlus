@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       return {
         id: item.vod_id.toString(),
         title: (item.vod_name || '').trim().replace(/\s+/g, ' '),
-        poster: item.vod_pic || '',
+        poster: (item.vod_pic || '').replace(/^http:\/\//i, 'https://'),
         year: item.vod_year ? item.vod_year.match(/\d{4}/)?.[0] || item.vod_year : 'unknown',
         episodes,
         episodes_titles: episodesTitles,

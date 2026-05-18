@@ -16,10 +16,7 @@ export async function GET(request: Request) {
 
   const config = await getConfig();
   const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
-  if (!liveSource) {
-    return NextResponse.json({ error: 'Source not found' }, { status: 404 });
-  }
-  const ua = liveSource.ua || 'AptvPlayer/1.4.10';
+  const ua = liveSource?.ua || 'AptvPlayer/1.4.10';
 
   try {
     const decodedUrl = decodeURIComponent(url);

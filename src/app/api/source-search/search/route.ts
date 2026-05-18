@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
       return {
         id: item.vod_id.toString(),
         title: item.vod_name,
-        poster: item.vod_pic || '',
+        poster: (item.vod_pic || '').replace(/^http:\/\//i, 'https://'),
         year: item.vod_year || 'unknown',
         episodes,
         episodes_titles,

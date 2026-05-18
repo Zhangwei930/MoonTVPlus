@@ -9,7 +9,7 @@ export const runtime = 'nodejs';
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const imageUrl = searchParams.get('url');
-  const source = searchParams.get('moontv-source');
+  const source = searchParams.get('source') || searchParams.get('moontv-source');
 
   if (!imageUrl) {
     return NextResponse.json({ error: 'Missing image URL' }, { status: 400 });
@@ -24,7 +24,6 @@ export async function GET(request: Request) {
     const imageResponse = await fetch(decodedUrl, {
       cache: 'no-cache',
       redirect: 'follow',
-      credentials: 'same-origin',
       headers: {
         'User-Agent': ua,
       },

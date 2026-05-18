@@ -169,6 +169,10 @@ function processCmsResponse(data: any, proxyOrigin: string, yellowFilter: boolea
   // 处理列表数据
   if (processedData.list && Array.isArray(processedData.list)) {
     processedData.list = processedData.list.map((item: any, index: number) => {
+      // 封面图强制转 HTTPS，避免浏览器混合内容警告
+      if (item.vod_pic && typeof item.vod_pic === 'string') {
+        item.vod_pic = item.vod_pic.replace(/^http:\/\//i, 'https://');
+      }
       // 只处理有播放地址的项目
       if (item.vod_play_url && typeof item.vod_play_url === 'string') {
         try {
