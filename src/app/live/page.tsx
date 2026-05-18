@@ -619,16 +619,20 @@ function LivePageClient() {
     }
   };
 
-  // 点击 "服务器转码播放" 后启动 ffmpeg 转码会话
+  // 启动 ffmpeg 转码会话；自动触发或用户手动点击都走这个
   const handleTranscodeClick = async () => {
     if (!videoUrl || isTranscoding) return;
+    const sourceUrl = videoUrl;
     setIsTranscoding(true);
+    cleanupPlayer();
+    setUnsupportedType(null);
+    setIsVideoLoading(true);
     try {
       const resp = await fetch('/api/transcode/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: videoUrl,
+          url: sourceUrl,
           source: currentSourceRef.current?.key || '',
         }),
       });
@@ -640,12 +644,16 @@ function LivePageClient() {
       if (!data.playlistUrl) {
         throw new Error('转码服务未返回播放地址');
       }
-      cleanupPlayer();
-      setUnsupportedType(null);
-      setIsVideoLoading(true);
-      setTranscodedSession({ sourceUrl: videoUrl, playlistUrl: data.playlistUrl });
+      // sourceUrl 在 await 期间用户可能已切换频道；切了就放弃这次结果
+      if (sourceUrl !== currentChannelRef.current?.url) {
+        return;
+      }
+      setTranscodedSession({ sourceUrl, playlistUrl: data.playlistUrl });
     } catch (err) {
-      alert(`转码启动失败：${err instanceof Error ? err.message : '未知错误'}`);
+      setIsVideoLoading(false);
+      setUnsupportedType(
+        `转码失败 (${err instanceof Error ? err.message : '未知错误'})`
+      );
     } finally {
       setIsTranscoding(false);
     }
@@ -1546,30 +1554,41 @@ function LivePageClient() {
     hls.attachMedia(video);
     video.hls = hls;
 
-    // 主动检测 H.265/HEVC：HLS.js 解析出 codec 后立刻判定，避免黑屏静默失败
-    const flagAsHevc = (reason: string) => {
-      console.warn('[live] HEVC detected:', reason);
-      setUnsupportedType('H.265 (HEVC)');
+    // 当前播放的是否为转码后流；防止"转码后又失败 → 再触发转码"的死循环
+    const isTranscodedSession = url.includes('/api/transcode/');
+    let fallbackFired = false;
+
+    const autoFallback = (reason: string) => {
+      if (fallbackFired) return;
+      fallbackFired = true;
+      console.warn('[live] auto-fallback:', reason);
       try { hls.destroy(); } catch { /* ignore */ }
+      if (isTranscodedSession) {
+        // 已经在转码流上，再转一次没意义
+        setUnsupportedType(`转码后仍无法播放 (${reason})`);
+      } else {
+        handleTranscodeClick();
+      }
     };
 
+    // 1. HLS.js 解析出 codec 就判定 H.265 / HEVC
     hls.on(Hls.Events.BUFFER_CODECS, function (_event: any, data: any) {
       const videoCodec = String(data?.video?.codec || '').toLowerCase();
       if (videoCodec && (videoCodec.startsWith('hvc') || videoCodec.startsWith('hev'))) {
-        flagAsHevc(`BUFFER_CODECS video=${videoCodec}`);
+        autoFallback(`HEVC codec ${videoCodec}`);
       }
     });
 
-    // 兜底：开播 5 秒后若有声音但 videoWidth 仍为 0，按 H.265 处理
+    // 2. 兜底启发：开播 5 秒后若有声音但 videoWidth=0 → 视为不可解视频
     const onPlaying = () => {
       window.setTimeout(() => {
         if (
+          !fallbackFired &&
           !video.paused &&
           video.currentTime > 0.5 &&
-          video.videoWidth === 0 &&
-          !unsupportedType
+          video.videoWidth === 0
         ) {
-          flagAsHevc(`black-screen heuristic currentTime=${video.currentTime}`);
+          autoFallback('black-screen heuristic');
         }
       }, 5000);
     };
@@ -1586,9 +1605,7 @@ function LivePageClient() {
           case Hls.ErrorTypes.NETWORK_ERROR:
             networkRetries += 1;
             if (networkRetries > MAX_NETWORK_RETRIES) {
-              console.warn('[live] giving up after', networkRetries, 'network retries');
-              setUnsupportedType(`无法加载 (${data.details || 'network'})`);
-              try { hls.destroy(); } catch { /* ignore */ }
+              autoFallback(`network ${data.details || 'error'}`);
             } else {
               hls.startLoad();
             }
@@ -1600,8 +1617,7 @@ function LivePageClient() {
               String(data.error?.message || '').toLowerCase().includes('hevc') ||
               String(data.error?.message || '').toLowerCase().includes('h.265');
             if (codecError) {
-              setUnsupportedType('H.265 (HEVC)');
-              hls.destroy();
+              autoFallback(`codec ${data.details || 'error'}`);
             } else {
               hls.recoverMediaError();
             }
@@ -2185,48 +2201,35 @@ function LivePageClient() {
                       </div>
                       <div className='space-y-4'>
                         {(() => {
-                          const isHevc = unsupportedType === 'H.265 (HEVC)';
-                          const isNetwork = unsupportedType.startsWith('无法加载');
-                          const title = isHevc
-                            ? '视频编码不受支持'
-                            : isNetwork
-                              ? '直播源加载失败'
-                              : '暂不支持的直播流类型';
-                          const mainMsg = isHevc
-                            ? '该频道使用 H.265 (HEVC) 编码，浏览器不支持解码'
-                            : isNetwork
-                              ? `${unsupportedType}，重试 3 次后放弃`
-                              : null;
-                          const subMsg = isHevc
-                            ? '可点击下方"服务器转码后播放"或用外部播放器（VLC、nPlayer、IINA 等）打开'
-                            : isNetwork
-                              ? '该频道在服务器端可能已失效。可尝试服务器转码（部分挑剔的源 ffmpeg 能拉到）或换一个频道'
-                              : '目前仅支持 M3U8 格式的直播流';
+                          const isTranscodeFailed = unsupportedType.startsWith('转码');
+                          const title = isTranscodeFailed
+                            ? '播放失败'
+                            : '暂不支持的直播流类型';
                           return (
                             <>
                               <h3 className='text-xl font-semibold text-white'>{title}</h3>
                               <div className='bg-orange-500/20 border border-orange-500/30 rounded-lg p-4'>
-                                <p className='text-orange-300 font-medium'>
-                                  {mainMsg ?? (
-                                    <>当前频道直播流类型：<span className='text-white font-bold'>{unsupportedType.toUpperCase()}</span></>
-                                  )}
+                                <p className='text-orange-300 font-medium break-words'>
+                                  {unsupportedType}
                                 </p>
-                                <p className='text-sm text-orange-200 mt-2'>{subMsg}</p>
+                                <p className='text-sm text-orange-200 mt-2'>
+                                  {isTranscodeFailed
+                                    ? '服务器端拉取或转码失败，可能频道已经失效；建议换一个'
+                                    : '目前浏览器内仅支持 M3U8 / FLV / MP4 直播流'}
+                                </p>
                               </div>
                             </>
                           );
                         })()}
-                        <p className='text-sm text-gray-300'>
-                          请尝试其他频道或使用外部播放器
-                        </p>
-                        {(unsupportedType === 'H.265 (HEVC)' || unsupportedType.startsWith('无法加载')) && (
+                        <p className='text-sm text-gray-300'>请尝试其他频道</p>
+                        {unsupportedType.startsWith('转码') && (
                           <button
                             type='button'
                             onClick={handleTranscodeClick}
                             disabled={isTranscoding}
                             className='mt-2 inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white text-sm font-medium shadow-lg transition-colors'
                           >
-                            {isTranscoding ? '正在启动转码…' : '🔧 服务器转码后播放'}
+                            {isTranscoding ? '正在启动转码…' : '🔄 重新尝试转码'}
                           </button>
                         )}
                       </div>
@@ -2240,14 +2243,19 @@ function LivePageClient() {
                     <div className='text-center max-w-md mx-auto px-6'>
                       <div className='relative mb-8'>
                         <div className='relative mx-auto w-24 h-24 bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl shadow-2xl flex items-center justify-center transform hover:scale-105 transition-transform duration-300'>
-                          <div className='text-white text-4xl'>📺</div>
+                          <div className='text-white text-4xl'>{isTranscoding ? '🔧' : '📺'}</div>
                           <div className='absolute -inset-2 bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl opacity-20 animate-spin'></div>
                         </div>
                       </div>
                       <div className='space-y-2'>
                         <p className='text-xl font-semibold text-white animate-pulse'>
-                          🔄 IPTV 加载中...
+                          {isTranscoding ? '正在服务器转码…' : '🔄 IPTV 加载中...'}
                         </p>
+                        {isTranscoding && (
+                          <p className='text-sm text-gray-300'>
+                            检测到不兼容编码，ffmpeg 启动约 5–15 秒
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
