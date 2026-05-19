@@ -1,4 +1,4 @@
-import { isValidTranscodeFile } from '@/lib/transcoder';
+import { buildTranscodeFfmpegArgs, isValidTranscodeFile } from '@/lib/transcoder';
 
 describe('isValidTranscodeFile', () => {
   it('accepts the playlist and numbered segment files', () => {
@@ -18,5 +18,23 @@ describe('isValidTranscodeFile', () => {
     expect(isValidTranscodeFile('')).toBe(false);
     expect(isValidTranscodeFile('index.m3u8/anything')).toBe(false);
     expect(isValidTranscodeFile('seg_0.ts\0.png')).toBe(false);
+  });
+});
+
+describe('buildTranscodeFfmpegArgs', () => {
+  it('forces browser-compatible H.264 output with a required video stream', () => {
+    const args = buildTranscodeFfmpegArgs(
+      'https://example.com/live/index.m3u8',
+      'TestUA/1.0',
+      '/tmp/moontv-transcode/session'
+    );
+
+    expect(args).toContain('-c:v');
+    expect(args).toContain('libx264');
+    expect(args).toContain('-pix_fmt');
+    expect(args).toContain('yuv420p');
+    expect(args).toContain('-map');
+    expect(args).toContain('0:v:0');
+    expect(args).not.toContain('0:v:0?');
   });
 });

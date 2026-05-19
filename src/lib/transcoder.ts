@@ -32,7 +32,7 @@ function appendStderr(session: TranscodeSession, chunk: string): void {
   session.stderrTail = (session.stderrTail + chunk).slice(-STDERR_TAIL_BYTES);
 }
 
-function ffmpegArgs(
+export function buildTranscodeFfmpegArgs(
   upstreamUrl: string,
   userAgent: string,
   workDir: string
@@ -40,23 +40,34 @@ function ffmpegArgs(
   return [
     '-hide_banner',
     '-loglevel', 'error',
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '2',
     '-user_agent', userAgent,
     '-fflags', '+genpts+discardcorrupt',
+    '-analyzeduration', '10000000',
+    '-probesize', '10000000',
     '-i', upstreamUrl,
-    '-map', '0:v:0?',
+    '-map', '0:v:0',
     '-map', '0:a:0?',
+    '-sn',
+    '-dn',
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
     '-tune', 'zerolatency',
+    '-pix_fmt', 'yuv420p',
+    '-profile:v', 'main',
     '-crf', '28',
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ac', '2',
+    '-max_muxing_queue_size', '1024',
     '-sc_threshold', '0',
     '-g', '60',
     '-f', 'hls',
     '-hls_time', '4',
     '-hls_list_size', '6',
+    '-hls_segment_type', 'mpegts',
     '-hls_flags', 'delete_segments+omit_endlist+independent_segments',
     '-hls_segment_filename', path.join(workDir, 'seg_%d.ts'),
     path.join(workDir, 'index.m3u8'),
@@ -75,7 +86,7 @@ export async function startTranscodeSession(
   const workDir = path.join(TRANSCODE_ROOT, sessionId);
   await mkdir(workDir, { recursive: true });
 
-  const proc = spawn('ffmpeg', ffmpegArgs(upstreamUrl, userAgent, workDir), {
+  const proc = spawn('ffmpeg', buildTranscodeFfmpegArgs(upstreamUrl, userAgent, workDir), {
     stdio: ['ignore', 'ignore', 'pipe'],
   });
 

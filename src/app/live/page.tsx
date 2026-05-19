@@ -14,6 +14,11 @@ import {
   savePlayRecord,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import {
+  findUnsupportedLiveVideoCodec,
+  isUnsupportedLiveVideoCodec,
+  shouldFallbackForBlackScreen,
+} from '@/lib/live-playback';
 import { parseCustomTimeFormat } from '@/lib/time';
 import { useLiveSync } from '@/hooks/useLiveSync';
 
@@ -1572,9 +1577,16 @@ function LivePageClient() {
     };
 
     // 1. HLS.js 解析出 codec 就判定 H.265 / HEVC
+    hls.on(Hls.Events.MANIFEST_PARSED, function (_event: any, data: any) {
+      const unsupportedCodec = findUnsupportedLiveVideoCodec(data?.levels);
+      if (unsupportedCodec) {
+        autoFallback(`HEVC codec ${unsupportedCodec}`);
+      }
+    });
+
     hls.on(Hls.Events.BUFFER_CODECS, function (_event: any, data: any) {
       const videoCodec = String(data?.video?.codec || '').toLowerCase();
-      if (videoCodec && (videoCodec.startsWith('hvc') || videoCodec.startsWith('hev'))) {
+      if (isUnsupportedLiveVideoCodec(videoCodec)) {
         autoFallback(`HEVC codec ${videoCodec}`);
       }
     });
@@ -1582,12 +1594,7 @@ function LivePageClient() {
     // 2. 兜底启发：开播 5 秒后若有声音但 videoWidth=0 → 视为不可解视频
     const onPlaying = () => {
       window.setTimeout(() => {
-        if (
-          !fallbackFired &&
-          !video.paused &&
-          video.currentTime > 0.5 &&
-          video.videoWidth === 0
-        ) {
+        if (!fallbackFired && shouldFallbackForBlackScreen(video)) {
           autoFallback('black-screen heuristic');
         }
       }, 5000);
