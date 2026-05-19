@@ -48,7 +48,7 @@ export function buildTranscodeFfmpegArgs(
     '-analyzeduration', '10000000',
     '-probesize', '10000000',
     '-i', upstreamUrl,
-    '-map', '0:v:0',
+    '-map', '0:v:0?',
     '-map', '0:a:0?',
     '-sn',
     '-dn',

@@ -22,7 +22,7 @@ describe('isValidTranscodeFile', () => {
 });
 
 describe('buildTranscodeFfmpegArgs', () => {
-  it('forces browser-compatible H.264 output with a required video stream', () => {
+  it('forces browser-compatible H.264 output without failing early on delayed video stream discovery', () => {
     const args = buildTranscodeFfmpegArgs(
       'https://example.com/live/index.m3u8',
       'TestUA/1.0',
@@ -34,7 +34,6 @@ describe('buildTranscodeFfmpegArgs', () => {
     expect(args).toContain('-pix_fmt');
     expect(args).toContain('yuv420p');
     expect(args).toContain('-map');
-    expect(args).toContain('0:v:0');
-    expect(args).not.toContain('0:v:0?');
+    expect(args).toContain('0:v:0?');
   });
 });

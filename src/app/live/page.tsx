@@ -15,7 +15,9 @@ import {
   subscribeToDataUpdates,
 } from '@/lib/db.client';
 import {
+  findSupportedLiveVideoLevel,
   findUnsupportedLiveVideoCodec,
+  isSupportedLiveVideoCodec,
   isUnsupportedLiveVideoCodec,
   shouldFallbackForBlackScreen,
 } from '@/lib/live-playback';
@@ -1562,6 +1564,7 @@ function LivePageClient() {
     // 当前播放的是否为转码后流；防止"转码后又失败 → 再触发转码"的死循环
     const isTranscodedSession = url.includes('/api/transcode/');
     let fallbackFired = false;
+    let hasSupportedVideoCodec = false;
 
     const autoFallback = (reason: string) => {
       if (fallbackFired) return;
@@ -1578,6 +1581,15 @@ function LivePageClient() {
 
     // 1. HLS.js 解析出 codec 就判定 H.265 / HEVC
     hls.on(Hls.Events.MANIFEST_PARSED, function (_event: any, data: any) {
+      const supportedLevel = findSupportedLiveVideoLevel(data?.levels);
+      if (supportedLevel !== null) {
+        hasSupportedVideoCodec = true;
+        hls.startLevel = supportedLevel;
+        hls.currentLevel = supportedLevel;
+        hls.nextLevel = supportedLevel;
+        return;
+      }
+
       const unsupportedCodec = findUnsupportedLiveVideoCodec(data?.levels);
       if (unsupportedCodec) {
         autoFallback(`HEVC codec ${unsupportedCodec}`);
@@ -1586,6 +1598,10 @@ function LivePageClient() {
 
     hls.on(Hls.Events.BUFFER_CODECS, function (_event: any, data: any) {
       const videoCodec = String(data?.video?.codec || '').toLowerCase();
+      if (isSupportedLiveVideoCodec(videoCodec)) {
+        hasSupportedVideoCodec = true;
+        return;
+      }
       if (isUnsupportedLiveVideoCodec(videoCodec)) {
         autoFallback(`HEVC codec ${videoCodec}`);
       }
@@ -1594,7 +1610,11 @@ function LivePageClient() {
     // 2. 兜底启发：开播 5 秒后若有声音但 videoWidth=0 → 视为不可解视频
     const onPlaying = () => {
       window.setTimeout(() => {
-        if (!fallbackFired && shouldFallbackForBlackScreen(video)) {
+        if (
+          !fallbackFired &&
+          !hasSupportedVideoCodec &&
+          shouldFallbackForBlackScreen(video)
+        ) {
           autoFallback('black-screen heuristic');
         }
       }, 5000);
