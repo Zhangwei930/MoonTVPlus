@@ -32,10 +32,7 @@ export async function GET(request: NextRequest) {
     const tmdbReverseProxy = config.SiteConfig?.TMDBReverseProxy;
 
     if (!tmdbApiKey) {
-      return NextResponse.json(
-        { code: 400, message: 'TMDB API Key 未配置' },
-        { status: 400 }
-      );
+      return NextResponse.json({ code: 200, data: [], cached: false });
     }
 
     // 调用TMDB API获取数据

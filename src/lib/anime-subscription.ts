@@ -5,7 +5,12 @@ import { parseStringPromise } from 'xml2js';
 import { getConfig, setCachedConfig } from '@/lib/config';
 import { db, getStorage } from '@/lib/db';
 import { EmailService } from '@/lib/email.service';
+import {
+  canDeliverNotification,
+  getUserNotificationPreferences,
+} from '@/lib/notification-preferences';
 import { OpenListClient } from '@/lib/openlist.client';
+
 import { AnimeSubscription } from '@/types/anime-subscription';
 
 /**
@@ -240,6 +245,19 @@ async function sendAnimeUpdateNotifications(
   for (const username of usersToNotify) {
     try {
       const userInfo = await db.getUserInfoV2(username);
+      const preferences = await getUserNotificationPreferences(
+        storage,
+        username
+      );
+      if (
+        !canDeliverNotification(
+          'anime_subscription_update',
+          'email',
+          preferences
+        )
+      ) {
+        continue;
+      }
       // 使用可选的 email 字段
       const email = (userInfo as any)?.email;
       if (email) {

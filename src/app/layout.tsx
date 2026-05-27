@@ -20,6 +20,7 @@ import { SiteProvider } from '../components/SiteProvider';
 import { ThemeProvider } from '../components/ThemeProvider';
 import { TokenRefreshManager } from '../components/TokenRefreshManager';
 import TopProgressBar from '../components/TopProgressBar';
+import UserActivityHeartbeat from '../components/UserActivityHeartbeat';
 import ChatFloatingWindow from '../components/watch-room/ChatFloatingWindow';
 import { WatchRoomProvider } from '../components/WatchRoomProvider';
 import { DownloadProvider } from '../contexts/DownloadContext';
@@ -31,7 +32,7 @@ export const dynamic = 'force-dynamic';
 export async function generateMetadata(): Promise<Metadata> {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
   const config = await getConfig();
-  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTVPlus';
+  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MagiesTvPlus';
   if (storageType !== 'localstorage') {
     siteName = config.SiteConfig.SiteName;
   }
@@ -54,7 +55,7 @@ export default async function RootLayout({
 }) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
 
-  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTVPlus';
+  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MagiesTvPlus';
   let announcement =
     process.env.ANNOUNCEMENT ||
     '本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。';
@@ -307,6 +308,7 @@ export default async function RootLayout({
           <TopProgressBar />
           <RouteScrollReset />
           <TokenRefreshManager />
+          <UserActivityHeartbeat />
           <SiteProvider siteName={siteName} announcement={announcement} tmdbApiKey={tmdbApiKey}>
             <WatchRoomProvider>
               <DownloadProvider>

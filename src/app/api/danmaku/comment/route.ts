@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
         count: 0,
         comments: [],
       },
-      { status: 500 }
+      { status: 200 }
     );
   }
 }

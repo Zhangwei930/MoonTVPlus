@@ -27,31 +27,36 @@ export async function GET(request: NextRequest) {
   try {
     const decodedUrl = decodeURIComponent(url);
 
-    const response = await fetch(decodedUrl, {
-      cache: 'no-cache',
-      redirect: 'follow',
-      credentials: 'same-origin',
-      headers: {
-        'User-Agent': ua,
-      },
-    });
-
-    if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch', message: response.statusText }, { status: 500 });
+    let response: Response;
+    try {
+      response = await fetch(decodedUrl, {
+        cache: 'no-cache',
+        redirect: 'follow',
+        headers: { 'User-Agent': ua },
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch {
+      // Network error or timeout — assume m3u8 and let the player handle it
+      return NextResponse.json({ success: true, type: 'm3u8' }, { status: 200 });
     }
 
-    const contentType = response.headers.get('Content-Type');
+    if (!response.ok) {
+      // Non-2xx but reachable — still assume m3u8
+      return NextResponse.json({ success: true, type: 'm3u8' }, { status: 200 });
+    }
+
+    const contentType = response.headers.get('Content-Type') ?? '';
     if (response.body) {
       response.body.cancel();
     }
-    if (contentType?.includes('video/mp4')) {
+    if (contentType.includes('video/mp4')) {
       return NextResponse.json({ success: true, type: 'mp4' }, { status: 200 });
     }
-    if (contentType?.includes('video/x-flv')) {
+    if (contentType.includes('video/x-flv')) {
       return NextResponse.json({ success: true, type: 'flv' }, { status: 200 });
     }
     return NextResponse.json({ success: true, type: 'm3u8' }, { status: 200 });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to fetch', message: error }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch', message: String(error) }, { status: 500 });
   }
 }

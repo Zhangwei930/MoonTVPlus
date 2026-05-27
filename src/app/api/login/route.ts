@@ -147,9 +147,9 @@ async function verifyTurnstileToken(token: string, secretKey: string): Promise<b
 function getDeviceInfo(request: NextRequest): string {
   const userAgent = request.headers.get('user-agent') || 'Unknown';
 
-  // 检查是否为 MoonTVPlus APP
+  // 检查是否为 MagiesTvPlus APP
   if (userAgent.toLowerCase().includes('moontvplus')) {
-    return 'MoonTVPlus APP';
+    return 'MagiesTvPlus APP';
   }
 
   // 检查是否为 OrionTV

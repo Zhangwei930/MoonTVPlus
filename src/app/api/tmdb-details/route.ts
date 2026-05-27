@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     if (!tmdbApiKey) {
       return NextResponse.json(
         { error: '未配置 TMDB API Key' },
-        { status: 500 }
+        { status: 404 }
       );
     }
 

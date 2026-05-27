@@ -214,6 +214,11 @@ export function getNetdiskCheckTask(taskId: string) {
   return task ? cloneTask(task) : null;
 }
 
+export function getAllNetdiskCheckTasks() {
+  cleanupOldTasks();
+  return Array.from(tasks.values()).map(cloneTask);
+}
+
 export function cancelNetdiskCheckTask(taskId: string) {
   const task = tasks.get(taskId);
   if (!task) return null;

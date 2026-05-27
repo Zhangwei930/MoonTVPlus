@@ -1,0 +1,34 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.aliyun
+    image: moontvplus:latest
+    container_name: moontvplus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_STORAGE_TYPE=d1
+      - NEXT_PUBLIC_SITE_NAME=MagiesTvPlus
+      - USERNAME=admin
+      - PASSWORD=${PASSWORD}
+      - CRON_PASSWORD=${CRON_PASSWORD}
+      - SQLITE_DB_PATH=/app/.data/moontv.db
+      - DOCKER_ENV=true
+      - NEXT_PUBLIC_BASE_URL=https://tv.magies.top
+    volumes:
+      - moontvplus_data:/app/.data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/server-config"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  moontvplus_data:
+    driver: local

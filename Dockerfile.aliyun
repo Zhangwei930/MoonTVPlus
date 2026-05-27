@@ -1,0 +1,69 @@
+ARG NODE_VERSION=24.11.1
+
+FROM ubuntu:22.04 AS node-base
+ARG NODE_VERSION
+
+ENV PATH=/usr/local/lib/nodejs/bin:$PATH
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i \
+      -e 's@archive.ubuntu.com@mirrors.aliyun.com@g' \
+      -e 's@security.ubuntu.com@mirrors.aliyun.com@g' \
+      /etc/apt/sources.list \
+  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
+  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends ca-certificates curl xz-utils python3 make g++ git ffmpeg \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
+  && mkdir -p /usr/local/lib/nodejs \
+  && tar -xJf /tmp/node.tar.xz -C /usr/local/lib/nodejs --strip-components=1 \
+  && rm /tmp/node.tar.xz \
+  && corepack enable \
+  && corepack prepare pnpm@10.14.0 --activate \
+  && pnpm config set registry https://registry.npmmirror.com
+
+FROM node-base AS deps
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+FROM node-base AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ENV DOCKER_ENV=true
+
+RUN pnpm run build
+RUN pnpm deploy --filter=. --prod --legacy /tmp/prod-deps
+
+FROM node-base AS runner
+
+RUN groupadd -g 1001 nodejs \
+  && useradd -u 1001 -g nodejs -m -s /usr/sbin/nologin nextjs
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+ENV DOCKER_ENV=true
+ENV SQLITE_DB_PATH=/app/.data/moontv.db
+
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=builder --chown=nextjs:nodejs /app/migrations ./migrations
+COPY --from=builder --chown=nextjs:nodejs /app/start.js ./start.js
+COPY --from=builder --chown=nextjs:nodejs /app/server.js ./server.js
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /tmp/prod-deps/node_modules ./node_modules
+
+RUN mkdir -p /app/.data && chown -R nextjs:nodejs /app/.data
+
+USER nextjs
+
+EXPOSE 3000
+
+CMD ["node", "start.js"]

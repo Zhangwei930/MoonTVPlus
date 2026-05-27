@@ -37,7 +37,9 @@ import {
   ExternalLink,
   FileText,
   FolderOpen,
+  Gauge,
   Globe,
+  ListChecks,
   Mail,
   Palette,
   Plus,
@@ -69,6 +71,8 @@ import {
   FEATURE_PERMISSION_OPTIONS,
 } from '@/lib/feature-permissions';
 
+import AdminHealthPanel from '@/components/AdminHealthPanel';
+import AdminTaskPanel from '@/components/AdminTaskPanel';
 import AnimeSubscriptionComponent from '@/components/AnimeSubscriptionComponent';
 import CorrectDialog from '@/components/CorrectDialog';
 import DataMigration from '@/components/DataMigration';
@@ -514,6 +518,7 @@ interface UserConfigProps {
   userTotal: number;
   fetchUsersV2: (page: number) => Promise<void>;
   userListLoading: boolean;
+  onlineUsers: Set<string>;
 }
 
 const UserConfig = ({
@@ -526,6 +531,7 @@ const UserConfig = ({
   userTotal,
   fetchUsersV2,
   userListLoading,
+  onlineUsers,
 }: UserConfigProps) => {
   const { alertModal, showAlert, hideAlert } = useAlertModal();
   const { isLoading, withLoading } = useLoadingState();
@@ -1586,6 +1592,23 @@ const UserConfig = ({
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100'>
                             <div className='flex items-center gap-2'>
+                              <span
+                                className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
+                                  onlineUsers.has(user.username)
+                                    ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]'
+                                    : 'bg-gray-300 dark:bg-gray-600'
+                                }`}
+                                title={
+                                  onlineUsers.has(user.username)
+                                    ? '在线'
+                                    : '离线'
+                                }
+                                aria-label={
+                                  onlineUsers.has(user.username)
+                                    ? '在线'
+                                    : '离线'
+                                }
+                              />
                               <span>{user.username}</span>
                               {user.oidcSub && (
                                 <span className='px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'>
@@ -6659,6 +6682,52 @@ const VideoSourceConfig = ({
     });
   };
 
+  // 禁用失效源
+  const handleDisableInvalidSources = async () => {
+    const invalidKeys = validationResults
+      .filter((r) => r.status === 'invalid' || r.status === 'no_results')
+      .map((r) => r.key);
+
+    if (invalidKeys.length === 0) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: '禁用失效源',
+      message: `确定要禁用检测到的 ${invalidKeys.length} 个失效视频源吗？`,
+      onConfirm: async () => {
+        try {
+          await withLoading('batchSource_batch_disable', () =>
+            callSourceApi({ action: 'batch_disable', keys: invalidKeys })
+          );
+          showAlert({
+            type: 'success',
+            title: '操作成功',
+            message: `已禁用 ${invalidKeys.length} 个失效视频源`,
+            timer: 2000,
+          });
+        } catch (err) {
+          showError(err instanceof Error ? err.message : '操作失败', showAlert);
+        }
+        setConfirmModal({
+          isOpen: false,
+          title: '',
+          message: '',
+          onConfirm: () => {},
+          onCancel: () => {},
+        });
+      },
+      onCancel: () => {
+        setConfirmModal({
+          isOpen: false,
+          title: '',
+          message: '',
+          onConfirm: () => {},
+          onCancel: () => {},
+        });
+      },
+    });
+  };
+
   if (!config) {
     return (
       <div className='text-center text-gray-500 dark:text-gray-400'>
@@ -6737,6 +6806,24 @@ const VideoSourceConfig = ({
               <Settings size={14} />
               <span>权重设置</span>
             </button>
+            {!isValidating &&
+              validationResults.some(
+                (r) => r.status === 'invalid' || r.status === 'no_results'
+              ) && (
+                <button
+                  onClick={handleDisableInvalidSources}
+                  disabled={isLoading('batchSource_batch_disable')}
+                  className={`px-3 py-1 text-sm rounded-lg transition-colors flex shrink-0 items-center space-x-1 whitespace-nowrap ${
+                    isLoading('batchSource_batch_disable')
+                      ? buttonStyles.disabled
+                      : buttonStyles.warning
+                  }`}
+                >
+                  {isLoading('batchSource_batch_disable')
+                    ? '禁用中...'
+                    : `禁用失效源 (${validationResults.filter((r) => r.status === 'invalid' || r.status === 'no_results').length})`}
+                </button>
+              )}
             <button
               onClick={() => setShowValidationModal(true)}
               disabled={isValidating}
@@ -14508,7 +14595,7 @@ const AIConfigComponent = ({
               value={defaultMessageNoVideo}
               onChange={(e) => setDefaultMessageNoVideo(e.target.value)}
               rows={3}
-              placeholder='例如：你好！我是MoonTVPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？'
+              placeholder='例如：你好！我是MagiesTvPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？'
               className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
             />
             <p className='mt-2 text-sm text-gray-600 dark:text-gray-400'>
@@ -16052,6 +16139,8 @@ function AdminPageClient() {
   const [role, setRole] = useState<'owner' | 'admin' | null>(null);
   const [showResetConfigModal, setShowResetConfigModal] = useState(false);
   const [expandedTabs, setExpandedTabs] = useState<{ [key: string]: boolean }>({
+    health: true,
+    taskCenter: true,
     userConfig: false,
     videoSource: false,
     sourceScriptLab: false,
@@ -16174,6 +16263,42 @@ function AdminPageClient() {
       fetchUsersV2();
     }
   };
+
+  // 在线状态：用户管理选项卡展开时每 30 秒拉一次活跃快照
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!expandedTabs.userConfig) return;
+
+    let cancelled = false;
+    const fetchActivity = async () => {
+      try {
+        const resp = await fetch('/api/admin/user/activity');
+        if (!resp.ok) return;
+        const data = (await resp.json()) as {
+          serverTime: number;
+          onlineThresholdMs: number;
+          activity: Record<string, number>;
+        };
+        if (cancelled) return;
+        const cutoff = data.serverTime - data.onlineThresholdMs;
+        const next = new Set<string>();
+        Object.entries(data.activity).forEach(([name, ts]) => {
+          if (ts >= cutoff) next.add(name);
+        });
+        setOnlineUsers(next);
+      } catch {
+        // 网络抖动忽略，下个 tick 重试
+      }
+    };
+
+    fetchActivity();
+    const interval = setInterval(fetchActivity, 30 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [expandedTabs.userConfig]);
 
   // 新增: 重置配置处理函数
   const handleResetConfig = () => {
@@ -16352,6 +16477,31 @@ function AdminPageClient() {
             </div>
           )}
 
+          <CollapsibleTab
+            title='站点体检'
+            icon={
+              <Gauge size={20} className='text-gray-600 dark:text-gray-400' />
+            }
+            isExpanded={expandedTabs.health}
+            onToggle={() => toggleTab('health')}
+          >
+            <AdminHealthPanel />
+          </CollapsibleTab>
+
+          <CollapsibleTab
+            title='任务中心'
+            icon={
+              <ListChecks
+                size={20}
+                className='text-gray-600 dark:text-gray-400'
+              />
+            }
+            isExpanded={expandedTabs.taskCenter}
+            onToggle={() => toggleTab('taskCenter')}
+          >
+            <AdminTaskPanel />
+          </CollapsibleTab>
+
           {/* 配置文件标签 - 仅站长可见 */}
           {role === 'owner' && (
             <CollapsibleTab
@@ -16437,6 +16587,7 @@ function AdminPageClient() {
                 userTotal={userTotal}
                 fetchUsersV2={fetchUsersV2}
                 userListLoading={userListLoading}
+                onlineUsers={onlineUsers}
               />
             </CollapsibleTab>
 
