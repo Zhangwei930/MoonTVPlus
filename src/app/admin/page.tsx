@@ -15419,7 +15419,7 @@ const MusicConfigComponent = ({
             • 音乐功能基于 lxserver 提供搜索、热搜、榜单、歌词与播放解析能力
           </p>
           <p>
-            • 建议填写服务端 Base URL 与持久 Token，由 MoonTV 服务端代为访问
+            • 建议填写服务端 Base URL 与持久 Token，由 MagiesTvPlus 服务端代为访问
             lxserver
           </p>
           <p>
