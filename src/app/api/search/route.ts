@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { mapInBatches, SEARCH_SOURCE_BATCH_SIZE } from '@/lib/batch';
 import { buildPrivateCacheHeaders } from '@/lib/cache-headers';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
@@ -193,20 +194,27 @@ export async function GET(request: NextRequest) {
       })
     : Promise.resolve([]);
 
-  // 添加超时控制和错误处理，避免慢接口拖累整体响应
-  const searchPromises = apiSites.map((site) =>
-    Promise.race([
-      searchFromApi(site, query),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
-      ),
-    ]).catch((err) => {
-      console.warn(`搜索失败 ${site.name}:`, err.message);
-      skippedSources.push(
-        classifySkippedSource(site.key, site.name, String(err.message))
-      );
-      return []; // 返回空数组而不是抛出错误
-    })
+  // 按权重降序、分批并发查询 CMS 源，避免全量并发压垮服务器和第三方源；
+  // 每个源带超时控制，慢接口不拖累整体响应
+  const sortedApiSites = [...apiSites].sort(
+    (a, b) => (weightMap.get(b.key) ?? 0) - (weightMap.get(a.key) ?? 0)
+  );
+  const cmsSearchPromise = mapInBatches(
+    sortedApiSites,
+    SEARCH_SOURCE_BATCH_SIZE,
+    (site) =>
+      Promise.race([
+        searchFromApi(site, query),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
+        ),
+      ]).catch((err) => {
+        console.warn(`搜索失败 ${site.name}:`, err.message);
+        skippedSources.push(
+          classifySkippedSource(site.key, site.name, String(err.message))
+        );
+        return []; // 返回空数组而不是抛出错误
+      })
   );
 
   const scriptSummaries = await listEnabledSourceScripts();
@@ -266,21 +274,18 @@ export async function GET(request: NextRequest) {
   );
 
   try {
-    const allResults = await Promise.all([
-      openlistPromise,
-      ...embyPromises,
-      ...searchPromises,
-      ...scriptPromises,
-    ]);
+    const [rawOpenlistResults, embyResultsArray, apiResults, scriptResults] =
+      await Promise.all([
+        openlistPromise,
+        Promise.all(embyPromises),
+        cmsSearchPromise,
+        Promise.all(scriptPromises),
+      ]);
 
-    // 分离结果：第一个是 openlist，接下来是 emby 结果，最后是 api 结果
     // 添加安全检查，确保即使某个结果处理出错也不影响其他结果
-    const openlistResults = Array.isArray(allResults[0]) ? allResults[0] : [];
-    const embyResultsArray = allResults.slice(1, 1 + embyPromises.length);
-    const apiResults = allResults.slice(1 + embyPromises.length, 1 + embyPromises.length + searchPromises.length);
-    const scriptResults = allResults.slice(1 + embyPromises.length + searchPromises.length);
-
-    // 合并所有 Emby 结果，添加安全检查
+    const openlistResults = Array.isArray(rawOpenlistResults)
+      ? rawOpenlistResults
+      : [];
     const embyResults = embyResultsArray.filter(Array.isArray).flat();
     const apiResultsFlat = apiResults.filter(Array.isArray).flat();
     const scriptResultsFlat = scriptResults.filter(Array.isArray).flat();

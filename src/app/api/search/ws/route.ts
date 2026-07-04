@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { mapInBatches, SEARCH_SOURCE_BATCH_SIZE } from '@/lib/batch';
 import { createCompletionTracker } from '@/lib/completion-tracker';
 import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
@@ -349,8 +350,8 @@ export async function GET(request: NextRequest) {
           });
       }
 
-      // 为每个源创建搜索 Promise
-      const searchPromises = sortedApiSites.map(async (site) => {
+      // CMS 源按权重降序分批并发查询，避免全量并发压垮服务器和第三方源
+      const runApiSiteSearch = async (site: (typeof sortedApiSites)[number]) => {
         try {
           // 添加超时控制
           const searchPromise = Promise.race([
@@ -422,7 +423,12 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-      });
+      };
+      const cmsSearchPromise = mapInBatches(
+        sortedApiSites,
+        SEARCH_SOURCE_BATCH_SIZE,
+        runApiSiteSearch
+      );
 
       const scriptPromises = enabledScripts.map(async (script) => {
         try {
@@ -516,7 +522,7 @@ export async function GET(request: NextRequest) {
       });
 
       // 等待所有搜索完成
-      await Promise.allSettled([...searchPromises, ...scriptPromises]);
+      await Promise.allSettled([cmsSearchPromise, ...scriptPromises]);
     },
 
     cancel() {
