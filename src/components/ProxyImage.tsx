@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   isImageFailedRecently,
   markImageFailed,
+  reportImageFailure,
 } from '@/lib/failed-image-cache';
 import {
   clearBangumiImageFallbackCacheIfFailed,
@@ -89,6 +90,7 @@ const ProxyImage: React.FC<ProxyImageProps> = ({
     } else {
       // 所有降级与重试手段用尽，记录坏图，短期内不再对同一 URL 发请求
       markImageFailed(originalSrc);
+      reportImageFailure(originalSrc);
     }
 
     onError?.(e);

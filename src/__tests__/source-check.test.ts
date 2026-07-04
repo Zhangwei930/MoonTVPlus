@@ -8,7 +8,11 @@ jest.mock('@/lib/notification-preferences', () => ({
   getUserNotificationPreferences: jest.fn().mockResolvedValue({}),
 }));
 
-import { evaluateSourceCheck, probeApiSite } from '@/lib/source-check';
+import {
+  appendSourceCheckHistory,
+  evaluateSourceCheck,
+  probeApiSite,
+} from '@/lib/source-check';
 
 describe('probeApiSite', () => {
   const site = { key: 'test', name: '测试源', api: 'https://example.com/api.php/provide/vod' };
@@ -99,5 +103,47 @@ describe('evaluateSourceCheck', () => {
   it('does not flag recovered for sources that never crossed threshold', () => {
     const { recovered } = evaluateSourceCheck({ a: 1 }, [{ key: 'a', ok: true }], threshold);
     expect(recovered).toEqual([]);
+  });
+});
+
+describe('appendSourceCheckHistory', () => {
+  const HOUR = 60 * 60 * 1000;
+  const now = 1700000000000;
+
+  it('appends samples with timestamp, ok and latency', () => {
+    const history = appendSourceCheckHistory(
+      {},
+      [
+        { key: 'a', ok: true, latencyMs: 120 },
+        { key: 'b', ok: false, error: 'timeout' },
+      ],
+      now
+    );
+    expect(history.a).toEqual([{ t: now, ok: true, ms: 120 }]);
+    expect(history.b).toEqual([{ t: now, ok: false }]);
+  });
+
+  it('keeps samples within 24h and prunes older ones', () => {
+    const history = appendSourceCheckHistory(
+      {
+        a: [
+          { t: now - 25 * HOUR, ok: true, ms: 100 },
+          { t: now - 2 * HOUR, ok: true, ms: 200 },
+        ],
+      },
+      [{ key: 'a', ok: true, latencyMs: 300 }],
+      now
+    );
+    expect(history.a.map((s) => s.ms)).toEqual([200, 300]);
+  });
+
+  it('drops sources that have no recent samples and no new result', () => {
+    const history = appendSourceCheckHistory(
+      { gone: [{ t: now - 30 * HOUR, ok: true, ms: 50 }] },
+      [{ key: 'a', ok: true, latencyMs: 10 }],
+      now
+    );
+    expect(history.gone).toBeUndefined();
+    expect(history.a).toHaveLength(1);
   });
 });

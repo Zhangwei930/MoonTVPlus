@@ -26,6 +26,7 @@ export interface AdminHealthReport {
 export interface AdminHealthOptions {
   storageType?: string;
   now?: number;
+  imageFailureTop?: Array<{ domain: string; count: number }>;
 }
 
 const statusRank: Record<AdminHealthStatus, number> = {
@@ -638,6 +639,86 @@ function checkAutomation(config: AdminConfig): AdminHealthGroup {
   ]);
 }
 
+const QUALITY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const QUALITY_TOP_N = 5;
+
+function checkSourceQuality(
+  config: AdminConfig,
+  options: AdminHealthOptions
+): AdminHealthGroup {
+  const now = options.now || Date.now();
+  const cutoff = now - QUALITY_WINDOW_MS;
+  const history = config.SourceCheckState?.history || {};
+  const nameOf = (key: string) =>
+    config.SourceConfig?.find((source) => source.key === key)?.name || key;
+
+  const slowest: Array<{ key: string; avg: number; n: number }> = [];
+  const failed: Array<{ key: string; failCount: number; total: number }> = [];
+
+  for (const [key, samples] of Object.entries(history)) {
+    const recent = samples.filter((sample) => sample.t >= cutoff);
+    if (recent.length === 0) continue;
+
+    const okSamples = recent.filter(
+      (sample) => sample.ok && typeof sample.ms === 'number'
+    );
+    if (okSamples.length > 0) {
+      const avg = Math.round(
+        okSamples.reduce((sum, sample) => sum + (sample.ms || 0), 0) /
+          okSamples.length
+      );
+      slowest.push({ key, avg, n: okSamples.length });
+    }
+
+    const failCount = recent.filter((sample) => !sample.ok).length;
+    if (failCount > 0) {
+      failed.push({ key, failCount, total: recent.length });
+    }
+  }
+
+  slowest.sort((a, b) => b.avg - a.avg);
+  failed.sort((a, b) => b.failCount - a.failCount);
+
+  const hasHistory = Object.keys(history).length > 0;
+  const imageTop = (options.imageFailureTop || []).slice(0, QUALITY_TOP_N);
+
+  return group('sourceQuality', '运行质量（24小时）', [
+    item(
+      'slowestSources',
+      '最慢源排行',
+      hasHistory ? 'ok' : 'disabled',
+      hasHistory
+        ? `按 24 小时平均响应耗时排序（${slowest.length} 个源有成功采样）`
+        : '暂无巡检数据，每小时定时检测后自动生成',
+      slowest
+        .slice(0, QUALITY_TOP_N)
+        .map((entry) => `${nameOf(entry.key)}：平均 ${entry.avg}ms（${entry.n} 次采样）`)
+    ),
+    item(
+      'mostFailedSources',
+      '失败最多源',
+      !hasHistory ? 'disabled' : failed.length > 0 ? 'warning' : 'ok',
+      !hasHistory
+        ? '暂无巡检数据，每小时定时检测后自动生成'
+        : failed.length > 0
+        ? `24 小时内有 ${failed.length} 个源出现检测失败`
+        : '24 小时内所有源检测均通过',
+      failed
+        .slice(0, QUALITY_TOP_N)
+        .map((entry) => `${nameOf(entry.key)}：失败 ${entry.failCount}/${entry.total} 次`)
+    ),
+    item(
+      'imageFailureDomains',
+      '图片失败域名',
+      imageTop.length > 0 ? 'warning' : 'disabled',
+      imageTop.length > 0
+        ? `24 小时内 ${imageTop.length} 个域名出现图片加载失败`
+        : '暂无图片加载失败记录',
+      imageTop.map((entry) => `${entry.domain}：失败 ${entry.count} 次`)
+    ),
+  ]);
+}
+
 export function buildAdminHealthReport(
   config: AdminConfig,
   options: AdminHealthOptions = {}
@@ -649,6 +730,7 @@ export function buildAdminHealthReport(
   const groups = [
     checkBasic(config, storageType),
     checkVideoSources(config),
+    checkSourceQuality(config, options),
     checkLive(config),
     checkPrivateLibrary(config),
     checkContent(config),

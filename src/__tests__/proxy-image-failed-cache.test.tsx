@@ -62,6 +62,21 @@ describe('ProxyImage 与失败缓存集成', () => {
     expect(isImageFailedRecently(BAD_URL)).toBe(true);
   });
 
+  it('最终失败时通过 sendBeacon 上报失败 URL', () => {
+    const sendBeacon = jest.fn().mockReturnValue(true);
+    (navigator as any).sendBeacon = sendBeacon;
+
+    const { container } = render(
+      <ProxyImage originalSrc={BAD_URL} alt='poster' retryOnError={false} />
+    );
+    fireEvent.error(container.querySelector('img') as HTMLImageElement);
+
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(sendBeacon.mock.calls[0][0]).toBe('/api/image-failures');
+
+    delete (navigator as any).sendBeacon;
+  });
+
   it('未失败过的图片正常使用原始 URL', () => {
     const { container } = render(
       <ProxyImage originalSrc={BAD_URL} alt='poster' />

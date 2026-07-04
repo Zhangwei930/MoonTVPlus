@@ -107,6 +107,8 @@ export interface AdminConfig {
   SourceCheckState?: {
     failures: Record<string, number>; // 各视频源连续检测失败次数
     lastCheckTime: number;
+    // 各源 24h 滚动巡检样本：t=时间戳，ok=是否可用，ms=成功时的延迟
+    history?: Record<string, Array<{ t: number; ok: boolean; ms?: number }>>;
   };
   LiveRefreshIntervalHours?: number; // 电视直播全局刷新间隔（小时），默认12小时
   LiveConfig?: {

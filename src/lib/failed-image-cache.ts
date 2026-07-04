@@ -40,3 +40,20 @@ export function isImageFailedRecently(url: string): boolean {
 export function clearFailedImageCache(): void {
   failedImages.clear();
 }
+
+/**
+ * 把最终失败的图片 URL 上报给服务端做域名聚合统计（fire-and-forget）
+ */
+export function reportImageFailure(url: string): void {
+  if (!url || typeof navigator === 'undefined' || !navigator.sendBeacon) {
+    return;
+  }
+  try {
+    navigator.sendBeacon(
+      '/api/image-failures',
+      new Blob([JSON.stringify({ url })], { type: 'application/json' })
+    );
+  } catch {
+    // 统计上报失败不影响页面
+  }
+}

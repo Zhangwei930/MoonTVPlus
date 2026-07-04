@@ -100,6 +100,39 @@ export function evaluateSourceCheck(
   return { failures, newlyDead, recovered };
 }
 
+export type SourceCheckSample = { t: number; ok: boolean; ms?: number };
+
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 纯函数：把本轮探测结果追加进 24h 滚动历史，裁掉过期样本，
+ * 没有任何近期样本的源整体移除
+ */
+export function appendSourceCheckHistory(
+  prevHistory: Record<string, SourceCheckSample[]>,
+  results: ProbeResult[],
+  now: number = Date.now()
+): Record<string, SourceCheckSample[]> {
+  const cutoff = now - HISTORY_WINDOW_MS;
+  const history: Record<string, SourceCheckSample[]> = {};
+
+  for (const [key, samples] of Object.entries(prevHistory)) {
+    const kept = samples.filter((s) => s.t >= cutoff);
+    if (kept.length > 0) {
+      history[key] = kept;
+    }
+  }
+
+  for (const result of results) {
+    const sample: SourceCheckSample = result.ok
+      ? { t: now, ok: true, ms: result.latencyMs }
+      : { t: now, ok: false };
+    history[result.key] = [...(history[result.key] || []), sample];
+  }
+
+  return history;
+}
+
 async function probeAll(
   sites: ProbeTarget[],
   fetchFn: FetchLike
@@ -176,6 +209,15 @@ export async function checkSourceAvailability(
         : '')
   );
 
-  config.SourceCheckState = { failures, lastCheckTime: Date.now() };
+  const now = Date.now();
+  config.SourceCheckState = {
+    failures,
+    lastCheckTime: now,
+    history: appendSourceCheckHistory(
+      config.SourceCheckState?.history || {},
+      results,
+      now
+    ),
+  };
   await db.saveAdminConfig(config);
 }
