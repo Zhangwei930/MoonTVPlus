@@ -1,5 +1,7 @@
 ARG NODE_VERSION=24.11.1
 
+# 与 Dockerfile.aliyun 相同的基础镜像，但构建产物（.next）在宿主机预先构建好，
+# 镜像内只安装生产依赖并组装，避免在低内存服务器上跑 next build 导致 OOM。
 FROM ubuntu:22.04 AS node-base
 ARG NODE_VERSION
 
@@ -24,19 +26,8 @@ RUN sed -i \
 FROM node-base AS deps
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-FROM node-base AS builder
-WORKDIR /app
-
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
-ENV DOCKER_ENV=true
-
-RUN pnpm run build
-RUN pnpm deploy --filter=. --prod --legacy /tmp/prod-deps
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN pnpm install --prod --frozen-lockfile
 
 FROM node-base AS runner
 
@@ -51,15 +42,16 @@ ENV PORT=3000
 ENV DOCKER_ENV=true
 ENV SQLITE_DB_PATH=/app/.data/moontv.db
 
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
-COPY --from=builder --chown=nextjs:nodejs /app/migrations ./migrations
-COPY --from=builder --chown=nextjs:nodejs /app/start.js ./start.js
-COPY --from=builder --chown=nextjs:nodejs /app/server.js ./server.js
-COPY --from=builder --chown=nextjs:nodejs /app/src/lib/tv-remote-hub.js ./src/lib/tv-remote-hub.js
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /tmp/prod-deps/node_modules ./node_modules
+# 构建上下文需包含宿主机预构建的 .next/standalone（已剔除 node_modules）与 .next/static
+COPY --chown=nextjs:nodejs .next/standalone ./
+COPY --chown=nextjs:nodejs scripts ./scripts
+COPY --chown=nextjs:nodejs migrations ./migrations
+COPY --chown=nextjs:nodejs start.js ./start.js
+COPY --chown=nextjs:nodejs server.js ./server.js
+COPY --chown=nextjs:nodejs src/lib/tv-remote-hub.js ./src/lib/tv-remote-hub.js
+COPY --chown=nextjs:nodejs public ./public
+COPY --chown=nextjs:nodejs .next/static ./.next/static
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 RUN mkdir -p /app/.data && chown -R nextjs:nodejs /app/.data
 

@@ -86,4 +86,4 @@ REMOTE_EOF
 echo ""
 echo "✓ 全部完成，清理本地临时文件..."
 rm -f "$IMAGE_FILE"
-echo "访问地址: https://tv.magies.top"
+echo "访问地址: https://tv.magies777.xyz"

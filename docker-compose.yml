@@ -19,7 +19,7 @@ services:
       - CRON_PASSWORD=${CRON_PASSWORD}
       - SQLITE_DB_PATH=/app/.data/moontv.db
       - DOCKER_ENV=true
-      - NEXT_PUBLIC_BASE_URL=https://tv.magies.top
+      - NEXT_PUBLIC_BASE_URL=https://tv.magies777.xyz
     volumes:
       - moontvplus_data:/app/.data
     healthcheck:
