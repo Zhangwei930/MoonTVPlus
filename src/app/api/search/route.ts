@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
   }
 
   const config = await getConfig();
+  const skippedSources: SkippedSource[] = [];
   const apiSites = await getAvailableApiSites(authInfo.username, includeSpecialSources);
   const [canAccessOpenList, canAccessEmby] = await Promise.all([
     hasFeaturePermission(authInfo.username, 'private_library'),
@@ -108,14 +109,21 @@ export async function GET(request: NextRequest) {
           }));
         } catch (error) {
           console.error(`[Search] 搜索 ${embyConfig.name} 失败:`, error);
-          return [];
+          throw error;
         }
       })(),
       new Promise<any[]>((_, reject) =>
         setTimeout(() => reject(new Error(`${embyConfig.name} timeout`)), 20000)
       ),
     ]).catch((error) => {
-      console.error(`[Search] 搜索 ${embyConfig.name} 超时:`, error);
+      console.error(`[Search] 搜索 ${embyConfig.name} 失败/超时:`, error);
+      skippedSources.push(
+        classifySkippedSource(
+          embySources.length === 1 ? 'emby' : `emby_${embyConfig.key}`,
+          embySources.length === 1 ? 'Emby' : embyConfig.name,
+          String(error?.message || error)
+        )
+      );
       return [];
     })
   );
@@ -166,20 +174,26 @@ export async function GET(request: NextRequest) {
             return [];
           } catch (error) {
             console.error('[Search] 搜索 OpenList 失败:', error);
-            return [];
+            throw error;
           }
         })(),
         new Promise<any[]>((_, reject) =>
           setTimeout(() => reject(new Error('OpenList timeout')), 20000)
         ),
       ]).catch((error) => {
-        console.error('[Search] 搜索 OpenList 超时:', error);
+        console.error('[Search] 搜索 OpenList 失败/超时:', error);
+        skippedSources.push(
+          classifySkippedSource(
+            'openlist',
+            '私人影库',
+            String(error?.message || error)
+          )
+        );
         return [];
       })
     : Promise.resolve([]);
 
   // 添加超时控制和错误处理，避免慢接口拖累整体响应
-  const skippedSources: SkippedSource[] = [];
   const searchPromises = apiSites.map((site) =>
     Promise.race([
       searchFromApi(site, query),
@@ -232,14 +246,21 @@ export async function GET(request: NextRequest) {
           return searchResults.flat();
         } catch (error) {
           console.error(`[Search] 搜索脚本 ${script.name} 失败:`, error);
-          return [];
+          throw error;
         }
       })(),
       new Promise<any[]>((_, reject) =>
         setTimeout(() => reject(new Error(`${script.name} timeout`)), 20000)
       ),
     ]).catch((error) => {
-      console.error(`[Search] 搜索脚本 ${script.name} 超时:`, error);
+      console.error(`[Search] 搜索脚本 ${script.name} 失败/超时:`, error);
+      skippedSources.push(
+        classifySkippedSource(
+          `script:${script.key}`,
+          script.name,
+          String(error?.message || error)
+        )
+      );
       return [];
     })
   );
