@@ -10,8 +10,10 @@ jest.mock('@/lib/notification-preferences', () => ({
 
 import {
   appendSourceCheckHistory,
+  collectProbeTargets,
   evaluateSourceCheck,
   probeApiSite,
+  probeUrl,
 } from '@/lib/source-check';
 
 describe('probeApiSite', () => {
@@ -103,6 +105,124 @@ describe('evaluateSourceCheck', () => {
   it('does not flag recovered for sources that never crossed threshold', () => {
     const { recovered } = evaluateSourceCheck({ a: 1 }, [{ key: 'a', ok: true }], threshold);
     expect(recovered).toEqual([]);
+  });
+});
+
+describe('collectProbeTargets', () => {
+  it('collects all configured source kinds with namespaced keys', () => {
+    const targets = collectProbeTargets({
+      SourceConfig: [
+        { key: 'cms1', name: 'CMS源', api: 'https://cms.example.com/api', from: 'custom' },
+        { key: 'cms2', name: '停用源', api: 'https://x.example.com/api', from: 'custom', disabled: true },
+      ],
+      LiveConfig: [
+        { key: 'zb', name: '直播源', url: 'https://live.example.com/tv.m3u', ua: 'MyUA', from: 'custom' },
+        { key: 'zb2', name: '停用直播', url: 'https://y.example.com/tv.m3u', from: 'custom', disabled: true },
+      ],
+      OpenListConfig: {
+        Enabled: true,
+        URL: 'https://openlist.example.com',
+        Username: 'u',
+        Password: 'p',
+        OfflineDownloadPath: '/',
+      },
+      EmbyConfig: {
+        Sources: [
+          { key: 'home', name: '家庭Emby', enabled: true, ServerURL: 'https://emby.example.com/' },
+          { key: 'off', name: '停用Emby', enabled: false, ServerURL: 'https://z.example.com' },
+        ],
+      },
+      SuwayomiConfig: { Enabled: true, ServerURL: 'https://manga.example.com' },
+      OPDSConfig: {
+        Enabled: true,
+        Sources: [
+          { id: 'b1', name: '书源一', url: 'https://books.example.com/opds', enabled: true },
+          { id: 'b2', name: '停用书源', url: 'https://b.example.com/opds', enabled: false },
+        ],
+      },
+    } as any);
+
+    const byKey = Object.fromEntries(targets.map((t) => [t.key, t]));
+
+    expect(byKey['cms1']).toMatchObject({ kind: 'cms', endpoint: 'https://cms.example.com/api' });
+    expect(byKey['cms2']).toBeUndefined();
+    expect(byKey['live:zb']).toMatchObject({
+      kind: 'url',
+      endpoint: 'https://live.example.com/tv.m3u',
+      ua: 'MyUA',
+    });
+    expect(byKey['live:zb2']).toBeUndefined();
+    expect(byKey['openlist']).toMatchObject({ kind: 'url', endpoint: 'https://openlist.example.com' });
+    expect(byKey['emby:home']).toMatchObject({
+      kind: 'url',
+      endpoint: 'https://emby.example.com/System/Info/Public',
+    });
+    expect(byKey['emby:off']).toBeUndefined();
+    expect(byKey['suwayomi']).toMatchObject({ kind: 'url' });
+    expect(byKey['opds:b1']).toMatchObject({ kind: 'url', endpoint: 'https://books.example.com/opds' });
+    expect(byKey['opds:b2']).toBeUndefined();
+  });
+
+  it('supports legacy single-source Emby config', () => {
+    const targets = collectProbeTargets({
+      SourceConfig: [],
+      EmbyConfig: { Enabled: true, ServerURL: 'https://old-emby.example.com' },
+    } as any);
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        key: 'emby',
+        kind: 'url',
+        endpoint: 'https://old-emby.example.com/System/Info/Public',
+      }),
+    ]);
+  });
+
+  it('returns empty for a bare config', () => {
+    expect(collectProbeTargets({ SourceConfig: [] } as any)).toEqual([]);
+  });
+});
+
+describe('probeUrl', () => {
+  const target = {
+    key: 'live:zb',
+    name: '直播源',
+    kind: 'url' as const,
+    endpoint: 'https://live.example.com/tv.m3u',
+    ua: 'MyUA',
+  };
+
+  it('returns ok with latency for a reachable url', async () => {
+    const fetchFn = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    const result = await probeUrl(target, fetchFn as any);
+    expect(result.ok).toBe(true);
+    expect(typeof result.latencyMs).toBe('number');
+    expect(fetchFn).toHaveBeenCalledWith(
+      target.endpoint,
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'User-Agent': 'MyUA' }),
+      })
+    );
+  });
+
+  it('treats auth-protected (4xx) responses as reachable', async () => {
+    const fetchFn = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    const result = await probeUrl(target, fetchFn as any);
+    expect(result.ok).toBe(true);
+  });
+
+  it('treats 5xx as failure', async () => {
+    const fetchFn = jest.fn().mockResolvedValue({ ok: false, status: 503 });
+    const result = await probeUrl(target, fetchFn as any);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('503');
+  });
+
+  it('treats network errors as failure', async () => {
+    const fetchFn = jest.fn().mockRejectedValue(new Error('connect refused'));
+    const result = await probeUrl(target, fetchFn as any);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('connect refused');
   });
 });
 

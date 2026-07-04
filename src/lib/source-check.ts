@@ -1,11 +1,15 @@
 /* eslint-disable no-console */
 
 import { AdminConfig } from '@/lib/admin.types';
+import { collectProbeTargets, ProbeTargetEx } from '@/lib/probe-targets';
 import { db, getStorage } from '@/lib/db';
 import {
   canDeliverNotification,
   getUserNotificationPreferences,
 } from '@/lib/notification-preferences';
+
+export { collectProbeTargets } from '@/lib/probe-targets';
+export type { ProbeTargetEx } from '@/lib/probe-targets';
 
 const PROBE_TIMEOUT_MS = 10000;
 const PROBE_CONCURRENCY = 5;
@@ -100,6 +104,53 @@ export function evaluateSourceCheck(
   return { failures, newlyDead, recovered };
 }
 
+/**
+ * URL 可达性探测：服务端有响应（含 401/403 等鉴权拒绝）视为可用，
+ * 5xx 或网络错误视为失败
+ */
+export async function probeUrl(
+  target: ProbeTargetEx,
+  fetchFn: FetchLike = fetch
+): Promise<ProbeResult> {
+  const start = Date.now();
+  try {
+    const signal =
+      typeof AbortSignal !== 'undefined' &&
+      typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(PROBE_TIMEOUT_MS)
+        : undefined;
+    const response = await fetchFn(target.endpoint, {
+      signal,
+      headers: { 'User-Agent': target.ua || 'AptvPlayer/1.4.10' },
+    });
+    try {
+      // 不读取响应体（直播 m3u 可能很大），仅确认可达后立即释放
+      await (response as { body?: { cancel?: () => Promise<void> } }).body?.cancel?.();
+    } catch {
+      // 释放失败不影响探测结果
+    }
+    if (response.status >= 500) {
+      return { key: target.key, ok: false, error: `HTTP ${response.status}` };
+    }
+    return { key: target.key, ok: true, latencyMs: Date.now() - start };
+  } catch (error) {
+    return { key: target.key, ok: false, error: String(error) };
+  }
+}
+
+export async function probeTarget(
+  target: ProbeTargetEx,
+  fetchFn: FetchLike = fetch
+): Promise<ProbeResult> {
+  if (target.kind === 'cms') {
+    return probeApiSite(
+      { key: target.key, name: target.name, api: target.endpoint },
+      fetchFn
+    );
+  }
+  return probeUrl(target, fetchFn);
+}
+
 export type SourceCheckSample = { t: number; ok: boolean; ms?: number };
 
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -134,13 +185,13 @@ export function appendSourceCheckHistory(
 }
 
 async function probeAll(
-  sites: ProbeTarget[],
+  targets: ProbeTargetEx[],
   fetchFn: FetchLike
 ): Promise<ProbeResult[]> {
   const results: ProbeResult[] = [];
-  for (let i = 0; i < sites.length; i += PROBE_CONCURRENCY) {
-    const batch = sites.slice(i, i + PROBE_CONCURRENCY);
-    results.push(...(await Promise.all(batch.map((s) => probeApiSite(s, fetchFn)))));
+  for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
+    const batch = targets.slice(i, i + PROBE_CONCURRENCY);
+    results.push(...(await Promise.all(batch.map((t) => probeTarget(t, fetchFn)))));
   }
   return results;
 }
@@ -173,7 +224,7 @@ export async function checkSourceAvailability(
   config: AdminConfig,
   fetchFn: FetchLike = fetch
 ): Promise<void> {
-  const sites = (config.SourceConfig || []).filter((s) => !s.disabled);
+  const sites = collectProbeTargets(config);
   if (sites.length === 0) return;
 
   const results = await probeAll(sites, fetchFn);
@@ -188,22 +239,22 @@ export async function checkSourceAvailability(
 
   if (newlyDead.length > 0) {
     await notifyOwner(
-      '视频源疑似失效',
-      `以下视频源连续 ${DEFAULT_FAILURE_THRESHOLD} 次检测失败，请到管理后台确认：${newlyDead
+      '源疑似失效',
+      `以下源连续 ${DEFAULT_FAILURE_THRESHOLD} 次检测失败，请到管理后台确认：${newlyDead
         .map(nameOf)
         .join('、')}`
     );
   }
   if (recovered.length > 0) {
     await notifyOwner(
-      '视频源已恢复',
-      `以下视频源检测恢复正常：${recovered.map(nameOf).join('、')}`
+      '源已恢复',
+      `以下源检测恢复正常：${recovered.map(nameOf).join('、')}`
     );
   }
 
   const failed = results.filter((r) => !r.ok);
   console.log(
-    `视频源检测完成: ${results.length - failed.length}/${results.length} 可用` +
+    `源可用性检测完成: ${results.length - failed.length}/${results.length} 可用` +
       (failed.length > 0
         ? `，失败: ${failed.map((r) => `${nameOf(r.key)}(${r.error})`).join('、')}`
         : '')

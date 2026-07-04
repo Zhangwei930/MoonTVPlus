@@ -1,4 +1,5 @@
 import { AdminConfig } from './admin.types';
+import { collectProbeTargets } from './probe-targets';
 
 export type AdminHealthStatus = 'ok' | 'warning' | 'error' | 'disabled';
 
@@ -649,8 +650,10 @@ function checkSourceQuality(
   const now = options.now || Date.now();
   const cutoff = now - QUALITY_WINDOW_MS;
   const history = config.SourceCheckState?.history || {};
-  const nameOf = (key: string) =>
-    config.SourceConfig?.find((source) => source.key === key)?.name || key;
+  const targetNames = new Map(
+    collectProbeTargets(config).map((target) => [target.key, target.name])
+  );
+  const nameOf = (key: string) => targetNames.get(key) || key;
 
   const slowest: Array<{ key: string; avg: number; n: number }> = [];
   const failed: Array<{ key: string; failCount: number; total: number }> = [];
