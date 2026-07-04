@@ -104,6 +104,10 @@ export interface AdminConfig {
     from: 'config' | 'custom';
     disabled?: boolean;
   }[];
+  SourceCheckState?: {
+    failures: Record<string, number>; // 各视频源连续检测失败次数
+    lastCheckTime: number;
+  };
   LiveRefreshIntervalHours?: number; // 电视直播全局刷新间隔（小时），默认12小时
   LiveConfig?: {
     key: string;

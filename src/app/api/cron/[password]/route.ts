@@ -25,6 +25,7 @@ import {
   getUserNotificationPreferences,
 } from '@/lib/notification-preferences';
 import { startOpenListRefresh } from '@/lib/openlist-refresh';
+import { checkSourceAvailability } from '@/lib/source-check';
 import { getSuwayomiConfig, loginWithSimpleAuth, SuwayomiClient } from '@/lib/suwayomi.client';
 import { SearchResult } from '@/lib/types';
 
@@ -240,7 +241,17 @@ async function cronJob() {
     refreshOpenList(),
     refreshRecordAndFavorites(),
     checkAnimeSubscriptions(),
+    runSourceAvailabilityCheck(),
   ]);
+}
+
+async function runSourceAvailabilityCheck() {
+  try {
+    const config = await getConfig();
+    await checkSourceAvailability(config);
+  } catch (error) {
+    console.error('视频源可用性检测失败:', error);
+  }
 }
 
 async function refreshAllLiveChannels() {
