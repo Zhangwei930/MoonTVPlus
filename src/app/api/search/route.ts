@@ -9,6 +9,10 @@ import { searchFromApi } from '@/lib/downstream';
 import { getProxyToken } from '@/lib/emby-token';
 import { hasFeaturePermission } from '@/lib/permissions';
 import {
+  classifySkippedSource,
+  SkippedSource,
+} from '@/lib/skipped-sources';
+import {
   executeSavedSourceScript,
   listEnabledSourceScripts,
   normalizeScriptSearchResults,
@@ -175,6 +179,7 @@ export async function GET(request: NextRequest) {
     : Promise.resolve([]);
 
   // 添加超时控制和错误处理，避免慢接口拖累整体响应
+  const skippedSources: SkippedSource[] = [];
   const searchPromises = apiSites.map((site) =>
     Promise.race([
       searchFromApi(site, query),
@@ -183,6 +188,9 @@ export async function GET(request: NextRequest) {
       ),
     ]).catch((err) => {
       console.warn(`搜索失败 ${site.name}:`, err.message);
+      skippedSources.push(
+        classifySkippedSource(site.key, site.name, String(err.message))
+      );
       return []; // 返回空数组而不是抛出错误
     })
   );
@@ -281,11 +289,14 @@ export async function GET(request: NextRequest) {
 
     if (flattenedResults.length === 0) {
       // no cache if empty
-      return NextResponse.json({ results: [] }, { status: 200 });
+      return NextResponse.json(
+        { results: [], skipped_sources: skippedSources },
+        { status: 200 }
+      );
     }
 
     return NextResponse.json(
-      { results: flattenedResults },
+      { results: flattenedResults, skipped_sources: skippedSources },
       {
         headers: buildPrivateCacheHeaders(cacheTime),
       }

@@ -36,6 +36,11 @@ import {
   buildSearchEmptyActions,
   SearchEmptyAction,
 } from '@/lib/search-empty-actions';
+import {
+  buildSkippedSourcesSummary,
+  classifySkippedSource,
+  SkippedSource,
+} from '@/lib/skipped-sources';
 import { SearchResult } from '@/lib/types';
 import { appendSpecialSourceParam, isSpecialSourcesEnabledOnDevice } from '@/lib/special-source.client';
 import { processImageUrl } from '@/lib/utils';
@@ -120,6 +125,9 @@ function SearchPageClient() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const [totalSources, setTotalSources] = useState(0);
   const [completedSources, setCompletedSources] = useState(0);
+  // 本次搜索中被自动跳过（超时/失败）的源
+  const [skippedSources, setSkippedSources] = useState<SkippedSource[]>([]);
+  const [showSkippedDetail, setShowSkippedDetail] = useState(false);
   const pendingResultsRef = useRef<SearchResult[]>([]);
   const flushTimerRef = useRef<number | null>(null);
   const [useFluidSearch, setUseFluidSearch] = useState(true);
@@ -1242,6 +1250,8 @@ function SearchPageClient() {
       setSearchResults([]);
       setTotalSources(0);
       setCompletedSources(0);
+      setSkippedSources([]);
+      setShowSkippedDetail(false);
       setIsFromCache(false);
       if (query) {
         setSearchQuery(query);
@@ -1303,6 +1313,8 @@ function SearchPageClient() {
       setSearchResults([]);
       setTotalSources(0);
       setCompletedSources(0);
+      setSkippedSources([]);
+      setShowSkippedDetail(false);
       // 清理缓冲
       pendingResultsRef.current = [];
       if (flushTimerRef.current) {
@@ -1376,6 +1388,14 @@ function SearchPageClient() {
               }
               case 'source_error':
                 setCompletedSources((prev) => prev + 1);
+                setSkippedSources((prev) => [
+                  ...prev,
+                  classifySkippedSource(
+                    payload.source || '',
+                    payload.sourceName || '',
+                    String(payload.error || '')
+                  ),
+                ]);
                 break;
               case 'complete':
                 setCompletedSources(payload.completedSources || totalSources);
@@ -1457,6 +1477,9 @@ function SearchPageClient() {
               setCachedResults(trimmed, results);
               setTotalSources(1);
               setCompletedSources(1);
+            }
+            if (Array.isArray(data.skipped_sources)) {
+              setSkippedSources(data.skipped_sources as SkippedSource[]);
             }
             setIsLoading(false);
           })
@@ -2003,6 +2026,33 @@ function SearchPageClient() {
                             {resultCountMeta.unit}
                           </span>
                         )}
+                        {!isLoading &&
+                          buildSkippedSourcesSummary(skippedSources) && (
+                            <button
+                              type='button'
+                              onClick={() =>
+                                setShowSkippedDetail((prev) => !prev)
+                              }
+                              className='inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-600 ring-1 ring-amber-200 transition-colors hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-800 dark:hover:bg-amber-900/50'
+                              title='点击查看被跳过的源'
+                            >
+                              {buildSkippedSourcesSummary(skippedSources)}
+                            </button>
+                          )}
+                        {!isLoading &&
+                          showSkippedDetail &&
+                          skippedSources.length > 0 && (
+                            <span className='w-full text-gray-500 dark:text-gray-400'>
+                              {skippedSources
+                                .map(
+                                  (s) =>
+                                    `${s.name}（${
+                                      s.reason === 'timeout' ? '超时' : '失败'
+                                    }）`
+                                )
+                                .join('、')}
+                            </span>
+                          )}
                       </div>
                     </div>
                     {searchQuery && (
