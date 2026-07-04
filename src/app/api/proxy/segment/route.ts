@@ -27,17 +27,16 @@ export async function GET(request: Request) {
       return new Response('Upstream error', { status: upstream.status });
     }
 
-    // Buffer the full segment — nginx proxy_buffering requires a complete
-    // response body; ReadableStream passthrough causes nginx 500.
-    const buffer = await upstream.arrayBuffer();
-
-    return new Response(buffer, {
+    // 流式透传，首包立即返回；不透传 Content-Length——fetch 可能已解压
+    // 上游 body，长度不一致会导致 nginx 截断报错（nginx 侧已对
+    // /api/proxy/ 关闭 proxy_buffering）。直播分片 URL 唯一且内容不可变，
+    // 短缓存可吸收回看/重试的重复请求。
+    return new Response(upstream.body, {
       status: 200,
       headers: {
         'Content-Type': 'video/mp2t',
-        'Content-Length': String(buffer.byteLength),
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-store',
+        'Cache-Control': 'public, max-age=30',
       },
     });
   } catch {

@@ -65,6 +65,8 @@ export async function GET(request: Request) {
       response.headers.get('Content-Type') || 'video/mp2t',
       response.headers.get('content-length')
     );
+    // VOD 分片内容不可变，浏览器短缓存可吸收拖动进度条产生的重复请求
+    headers.set('Cache-Control', 'public, max-age=3600');
 
     // 使用流式传输，避免占用内存
     let isCancelled = false;
