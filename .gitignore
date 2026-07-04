@@ -35,6 +35,9 @@ yarn-error.log*
 
 # cloudflare
 .open-next/
+
+# edgeone
+.edgeone/
 .wrangler/
 wrangler.toml.bak
 
@@ -69,3 +72,6 @@ public/workbox-*.js.map
 scripts/tvbox/
 scripts/test
 GEMINI.md
+
+.agents/
+skills-lock.json
