@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { buildPrivateCacheHeaders } from '@/lib/cache-headers';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import {
@@ -29,12 +30,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { result: null, error: '缺少必要参数: q 或 resourceId' },
       {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
+        headers: buildPrivateCacheHeaders(cacheTime),
       }
     );
   }
@@ -96,12 +92,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         { results: result },
         {
-          headers: {
-            'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-            'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Netlify-Vary': 'query',
-          },
+          headers: buildPrivateCacheHeaders(cacheTime),
         }
       );
     }
@@ -140,12 +131,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         { results: result },
         {
-          headers: {
-            'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-            'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Netlify-Vary': 'query',
-          },
+          headers: buildPrivateCacheHeaders(cacheTime),
         }
       );
     }

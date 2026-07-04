@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { buildPrivateCacheHeaders } from '@/lib/cache-headers';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import { getProxyToken } from '@/lib/emby-token';
@@ -32,12 +33,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { results: [] },
       {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
+        headers: buildPrivateCacheHeaders(cacheTime),
       }
     );
   }
@@ -291,12 +287,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { results: flattenedResults },
       {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
+        headers: buildPrivateCacheHeaders(cacheTime),
       }
     );
   } catch (error) {
