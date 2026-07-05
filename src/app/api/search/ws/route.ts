@@ -194,9 +194,9 @@ export async function GET(request: NextRequest) {
                   douban_id: 0,
                 }));
 
-                // 单独发送每个源的结果
+                // 先发送该源的结果并写入 allResults，最后才计数——
+                // increment 可能同步触发 complete 并关闭流
                 embyCompletedCount++;
-                tracker.increment();
                 if (!streamClosed) {
                   const sourceEvent = `data: ${JSON.stringify({
                     type: 'source_result',
@@ -213,12 +213,12 @@ export async function GET(request: NextRequest) {
                     streamClosed = true;
                   }
                 }
+                tracker.increment();
 
                 return results;
               } catch (error) {
                 console.error(`[Search WS] 搜索 ${embyConfig.name} 失败:`, error);
                 embyCompletedCount++;
-                tracker.increment();
                 // 发送源错误事件，让用户知道该源被跳过
                 if (!streamClosed) {
                   const sourceValue = embySources.length === 1 ? 'emby' : `emby_${embyConfig.key}`;
@@ -232,6 +232,7 @@ export async function GET(request: NextRequest) {
                   })}\n\n`;
                   safeEnqueue(encoder.encode(errorEvent));
                 }
+                tracker.increment();
                 return [];
               }
             });
@@ -243,7 +244,6 @@ export async function GET(request: NextRequest) {
             // 无论成功失败，都把未计数的 Emby 源补齐，保证 complete 一定会发出
             const remainingSources = embySourcesCount - embyCompletedCount;
             for (let i = 0; i < remainingSources; i++) {
-              tracker.increment();
               if (!streamClosed) {
                 const errorEvent = `data: ${JSON.stringify({
                   type: 'source_error',
@@ -254,6 +254,7 @@ export async function GET(request: NextRequest) {
                 })}\n\n`;
                 safeEnqueue(encoder.encode(errorEvent));
               }
+              tracker.increment();
             }
           }
         })();
@@ -314,7 +315,6 @@ export async function GET(request: NextRequest) {
           ),
         ])
           .then((openlistResults: any) => {
-            tracker.increment();
             if (!streamClosed) {
               // 添加安全检查，确保结果是数组
               const safeResults = Array.isArray(openlistResults) ? openlistResults : [];
@@ -325,18 +325,18 @@ export async function GET(request: NextRequest) {
                 results: safeResults,
                 timestamp: Date.now()
               })}\n\n`;
-              if (!safeEnqueue(encoder.encode(sourceEvent))) {
+              if (safeEnqueue(encoder.encode(sourceEvent))) {
+                if (safeResults.length > 0) {
+                  allResults.push(...safeResults);
+                }
+              } else {
                 streamClosed = true;
-                return;
-              }
-              if (safeResults.length > 0) {
-                allResults.push(...safeResults);
               }
             }
+            tracker.increment();
           })
           .catch((error) => {
-            console.error('[Search WS] 搜索 OpenList 超时:', error);
-            tracker.increment();
+            console.error('[Search WS] 搜索 OpenList 失败/超时:', error);
             if (!streamClosed) {
               const errorEvent = `data: ${JSON.stringify({
                 type: 'source_error',
@@ -347,6 +347,7 @@ export async function GET(request: NextRequest) {
               })}\n\n`;
               safeEnqueue(encoder.encode(errorEvent));
             }
+            tracker.increment();
           });
       }
 
@@ -380,9 +381,8 @@ export async function GET(request: NextRequest) {
             weight: result.weight ?? (weightMap.get(result.source) ?? 0),
           }));
 
-          // 发送该源的搜索结果
-          tracker.increment();
-
+          // 先发送该源的结果并写入 allResults，最后才计数——
+          // increment 可能同步触发 complete 并关闭流
           if (!streamClosed) {
             const sourceEvent = `data: ${JSON.stringify({
               type: 'source_result',
@@ -394,6 +394,7 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(sourceEvent))) {
               streamClosed = true;
+              tracker.increment();
               return; // 连接已关闭，停止处理
             }
           }
@@ -402,12 +403,11 @@ export async function GET(request: NextRequest) {
             allResults.push(...filteredResults);
           }
 
+          tracker.increment();
         } catch (error) {
           console.warn(`搜索失败 ${site.name}:`, error);
 
           // 发送源错误事件
-          tracker.increment();
-
           if (!streamClosed) {
             const errorEvent = `data: ${JSON.stringify({
               type: 'source_error',
@@ -419,9 +419,11 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(errorEvent))) {
               streamClosed = true;
+              tracker.increment();
               return; // 连接已关闭，停止处理
             }
           }
+          tracker.increment();
         }
       };
       const cmsSearchPromise = mapInBatches(
@@ -479,8 +481,6 @@ export async function GET(request: NextRequest) {
             });
           }
 
-          tracker.increment();
-
           if (!streamClosed) {
             const sourceEvent = `data: ${JSON.stringify({
               type: 'source_result',
@@ -492,6 +492,7 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(sourceEvent))) {
               streamClosed = true;
+              tracker.increment();
               return;
             }
           }
@@ -499,10 +500,10 @@ export async function GET(request: NextRequest) {
           if (filteredResults.length > 0) {
             allResults.push(...filteredResults);
           }
-        } catch (error) {
-          console.warn(`搜索脚本失败 ${script.name}:`, error);
 
           tracker.increment();
+        } catch (error) {
+          console.warn(`搜索脚本失败 ${script.name}:`, error);
 
           if (!streamClosed) {
             const errorEvent = `data: ${JSON.stringify({
@@ -515,9 +516,11 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(errorEvent))) {
               streamClosed = true;
+              tracker.increment();
               return;
             }
           }
+          tracker.increment();
         }
       });
 
