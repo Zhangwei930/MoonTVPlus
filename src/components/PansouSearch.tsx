@@ -2,6 +2,7 @@
 'use client';
 
 import {
+  Activity,
   AlertCircle,
   Copy,
   Download,
@@ -25,6 +26,19 @@ interface PansouSearchProps {
 
 type DownloadTool = 'aria2' | 'Transmission' | 'qBittorrent';
 
+type MagnetHealthLevel = 'good' | 'ok' | 'risk' | 'unknown';
+
+interface MagnetHealthView {
+  health: MagnetHealthLevel;
+  seeders: number;
+  leechers: number;
+  peers: number;
+  message: string;
+  infoHash?: string;
+  source?: 'scrape' | 'cache';
+  durationMs?: number;
+}
+
 const downloadToolOptions: Array<{ value: DownloadTool; label: string }> = [
   { value: 'aria2', label: 'aria2' },
   { value: 'qBittorrent', label: 'qBittorrent' },
@@ -43,6 +57,7 @@ export const CLOUD_TYPE_NAMES: Record<string, string> = {
   pikpak: 'PikPak',
   xunlei: '迅雷网盘',
   '123': '123网盘',
+  guangya: '光鸭云盘',
   magnet: '磁力链接',
   ed2k: '电驴链接',
   others: '其他',
@@ -64,6 +79,8 @@ const CLOUD_TYPE_COLORS: Record<string, string> = {
     'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200',
   xunlei: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-200',
   '123': 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200',
+  guangya:
+    'bg-lime-100 text-lime-800 dark:bg-lime-900/40 dark:text-lime-200',
   magnet: 'bg-gray-100 text-gray-800 dark:bg-gray-700/40 dark:text-gray-200',
   ed2k: 'bg-gray-100 text-gray-800 dark:bg-gray-700/40 dark:text-gray-200',
   others: 'bg-gray-100 text-gray-800 dark:bg-gray-700/40 dark:text-gray-200',
@@ -176,10 +193,18 @@ export default function PansouSearch({
   const [checkStatesByType, setCheckStatesByType] = useState<
     Record<string, StoredCloudCheckState>
   >({});
+  const [magnetHealthMap, setMagnetHealthMap] = useState<
+    Record<string, MagnetHealthView>
+  >({});
+  const [magnetHealthCheckingIds, setMagnetHealthCheckingIds] = useState<
+    Record<string, true>
+  >({});
 
   useEffect(() => {
     setCooldownRemainingMs(0);
     setCheckStatesByType({});
+    setMagnetHealthMap({});
+    setMagnetHealthCheckingIds({});
   }, [keyword, triggerSearch]);
 
   useEffect(() => {
@@ -351,6 +376,82 @@ export default function PansouSearch({
       });
     } finally {
       setTransferingUrl(null);
+    }
+  };
+
+  const magnetHealthBadgeClass = (level: MagnetHealthLevel) => {
+    switch (level) {
+      case 'good':
+        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+      case 'ok':
+        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
+      case 'risk':
+        return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
+      default:
+        return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+    }
+  };
+
+  const magnetHealthLabel = (level: MagnetHealthLevel) => {
+    switch (level) {
+      case 'good':
+        return '健康';
+      case 'ok':
+        return '一般';
+      case 'risk':
+        return '风险';
+      default:
+        return '未知';
+    }
+  };
+
+  // 磁力单条测活（与动漫磁链搜索共用 /api/acg/health，全站并发可配）
+  const handleMagnetHealthCheck = async (link: PansouLink) => {
+    const url = link.url?.trim();
+    if (!url || magnetHealthCheckingIds[url]) return;
+
+    setMagnetHealthCheckingIds((prev) => ({ ...prev, [url]: true }));
+    try {
+      const response = await fetch('/api/acg/health', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url,
+          skipCache: Boolean(magnetHealthMap[url]),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '测活失败');
+      }
+
+      setMagnetHealthMap((prev) => ({
+        ...prev,
+        [url]: {
+          health: data.health as MagnetHealthLevel,
+          seeders: data.seeders ?? 0,
+          leechers: data.leechers ?? 0,
+          peers: data.peers ?? 0,
+          message: data.message || '',
+          infoHash: data.infoHash,
+          source: data.source,
+          durationMs: data.durationMs,
+        },
+      }));
+    } catch (err: any) {
+      setToast({
+        message: err?.message || '测活失败',
+        type: 'error',
+        onClose: () => setToast(null),
+      });
+    } finally {
+      setMagnetHealthCheckingIds((prev) => {
+        const next = { ...prev };
+        delete next[url];
+        return next;
+      });
     }
   };
 
@@ -876,28 +977,57 @@ export default function PansouSearch({
                           </>
                         )}
                         {cloudType === 'magnet' && (
-                          <button
-                            onClick={() => handleOpenDownloadDialog(link)}
-                            disabled={downloadingUrl === link.url}
-                            className='flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-600 hover:bg-green-700 text-white text-xs transition-colors disabled:opacity-60'
-                            title='存到私人影库'
-                          >
-                            {downloadingUrl === link.url ? (
-                              <>
-                                <Loader2 className='h-3.5 w-3.5 animate-spin' />
-                                <span className='hidden sm:inline'>
-                                  下载中...
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <Download className='h-3.5 w-3.5' />
-                                <span className='hidden sm:inline'>
-                                  存到私人影库
-                                </span>
-                              </>
-                            )}
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleOpenDownloadDialog(link)}
+                              disabled={downloadingUrl === link.url}
+                              className='flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-600 hover:bg-green-700 text-white text-xs transition-colors disabled:opacity-60'
+                              title='存到私人影库'
+                            >
+                              {downloadingUrl === link.url ? (
+                                <>
+                                  <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                                  <span className='hidden sm:inline'>
+                                    下载中...
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download className='h-3.5 w-3.5' />
+                                  <span className='hidden sm:inline'>
+                                    存到私人影库
+                                  </span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleMagnetHealthCheck(link)}
+                              disabled={
+                                !link.url ||
+                                Boolean(magnetHealthCheckingIds[link.url])
+                              }
+                              className='flex items-center gap-1.5 px-2 py-1 rounded-md bg-sky-600 hover:bg-sky-700 text-white text-xs transition-colors disabled:opacity-60'
+                              title='Tracker 测活（全站并发上限可由 MAGNET_HEALTH_MAX_CONCURRENT 配置）'
+                            >
+                              {magnetHealthCheckingIds[link.url] ? (
+                                <>
+                                  <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                                  <span className='hidden sm:inline'>
+                                    测活中...
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <Activity className='h-3.5 w-3.5' />
+                                  <span className='hidden sm:inline'>
+                                    {magnetHealthMap[link.url]
+                                      ? '重新测活'
+                                      : '测活'}
+                                  </span>
+                                </>
+                              )}
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() =>
@@ -930,12 +1060,38 @@ export default function PansouSearch({
                     </div>
 
                     {/* 来源和时间 */}
-                    <div className='flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400'>
+                    <div className='flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 flex-wrap'>
                       {link.source && <span>来源: {link.source}</span>}
                       {link.datetime && (
                         <span>
                           {new Date(link.datetime).toLocaleDateString()}
                         </span>
+                      )}
+                      {cloudType === 'magnet' && magnetHealthMap[link.url] && (
+                        <>
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${magnetHealthBadgeClass(
+                              magnetHealthMap[link.url].health
+                            )}`}
+                          >
+                            {magnetHealthLabel(magnetHealthMap[link.url].health)}
+                          </span>
+                          <span className='text-gray-600 dark:text-gray-300'>
+                            Seeder {magnetHealthMap[link.url].seeders}
+                            {' · '}
+                            Leecher {magnetHealthMap[link.url].leechers}
+                            {' · '}
+                            Peer {magnetHealthMap[link.url].peers}
+                          </span>
+                          {typeof magnetHealthMap[link.url].durationMs ===
+                            'number' && (
+                            <span className='text-gray-400 dark:text-gray-500'>
+                              {magnetHealthMap[link.url].source === 'cache'
+                                ? '缓存'
+                                : `${magnetHealthMap[link.url].durationMs}ms`}
+                            </span>
+                          )}
+                        </>
                       )}
                       {(() => {
                         const checkResult = getCheckResultForUrl(

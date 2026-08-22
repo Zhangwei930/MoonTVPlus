@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { normalizeApiBaseUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
     const {
       SiteName,
       Announcement,
+      AnnouncementDisplayMode,
       SearchDownstreamMaxPage,
       SiteInterfaceCacheTime,
       DoubanProxyType,
@@ -46,10 +48,12 @@ export async function POST(request: NextRequest) {
       TMDBApiKey,
       TMDBProxy,
       TMDBReverseProxy,
+      TMDBImageBaseUrl,
       BangumiDataSource,
       BangumiApiBaseUrl,
       BangumiImageBaseUrl,
       BangumiProxy,
+      LiveChartProxy,
       BannerDataSource,
       RecommendationDataSource,
       PansouApiUrl,
@@ -82,9 +86,15 @@ export async function POST(request: NextRequest) {
       OIDCClientSecret,
       OIDCButtonText,
       OIDCMinTrustLevel,
+      AnalyticsEnabled,
+      AnalyticsProvider,
+      AnalyticsScriptUrl,
+      AnalyticsWebsiteId,
+      AnalyticsCustomScript,
     } = body as {
       SiteName: string;
       Announcement: string;
+      AnnouncementDisplayMode?: 'once' | 'every';
       SearchDownstreamMaxPage: number;
       SiteInterfaceCacheTime: number;
       DoubanProxyType: string;
@@ -100,10 +110,16 @@ export async function POST(request: NextRequest) {
       TMDBApiKey?: string;
       TMDBProxy?: string;
       TMDBReverseProxy?: string;
-      BangumiDataSource?: 'direct' | 'server-proxy' | 'custom-baseurl';
+      TMDBImageBaseUrl?: string;
+      BangumiDataSource?:
+        | 'direct'
+        | 'server-proxy'
+        | 'custom-baseurl'
+        | 'sakura';
       BangumiApiBaseUrl?: string;
       BangumiImageBaseUrl?: string;
       BangumiProxy?: string;
+      LiveChartProxy?: string;
       BannerDataSource?: string;
       RecommendationDataSource?: string;
       PansouApiUrl?: string;
@@ -136,12 +152,20 @@ export async function POST(request: NextRequest) {
       OIDCClientSecret?: string;
       OIDCButtonText?: string;
       OIDCMinTrustLevel?: number;
+      AnalyticsEnabled?: boolean;
+      AnalyticsProvider?: 'umami' | 'google' | 'clarity' | 'custom';
+      AnalyticsScriptUrl?: string;
+      AnalyticsWebsiteId?: string;
+      AnalyticsCustomScript?: string;
     };
 
     // 参数校验
     if (
       typeof SiteName !== 'string' ||
       typeof Announcement !== 'string' ||
+      (AnnouncementDisplayMode !== undefined &&
+        AnnouncementDisplayMode !== 'once' &&
+        AnnouncementDisplayMode !== 'every') ||
       typeof SearchDownstreamMaxPage !== 'number' ||
       typeof SiteInterfaceCacheTime !== 'number' ||
       typeof DoubanProxyType !== 'string' ||
@@ -161,15 +185,19 @@ export async function POST(request: NextRequest) {
       (TMDBProxy !== undefined && typeof TMDBProxy !== 'string') ||
       (TMDBReverseProxy !== undefined &&
         typeof TMDBReverseProxy !== 'string') ||
+      (TMDBImageBaseUrl !== undefined &&
+        typeof TMDBImageBaseUrl !== 'string') ||
       (BangumiDataSource !== undefined &&
         BangumiDataSource !== 'direct' &&
         BangumiDataSource !== 'server-proxy' &&
-        BangumiDataSource !== 'custom-baseurl') ||
+        BangumiDataSource !== 'custom-baseurl' &&
+        BangumiDataSource !== 'sakura') ||
       (BangumiApiBaseUrl !== undefined &&
         typeof BangumiApiBaseUrl !== 'string') ||
       (BangumiImageBaseUrl !== undefined &&
         typeof BangumiImageBaseUrl !== 'string') ||
       (BangumiProxy !== undefined && typeof BangumiProxy !== 'string') ||
+      (LiveChartProxy !== undefined && typeof LiveChartProxy !== 'string') ||
       (BannerDataSource !== undefined &&
         typeof BannerDataSource !== 'string') ||
       (RecommendationDataSource !== undefined &&
@@ -219,7 +247,16 @@ export async function POST(request: NextRequest) {
       (OIDCClientSecret !== undefined &&
         typeof OIDCClientSecret !== 'string') ||
       (OIDCButtonText !== undefined && typeof OIDCButtonText !== 'string') ||
-      (OIDCMinTrustLevel !== undefined && typeof OIDCMinTrustLevel !== 'number')
+      (OIDCMinTrustLevel !== undefined && typeof OIDCMinTrustLevel !== 'number') ||
+      (AnalyticsEnabled !== undefined && typeof AnalyticsEnabled !== 'boolean') ||
+      (AnalyticsProvider !== undefined &&
+        AnalyticsProvider !== 'umami' &&
+        AnalyticsProvider !== 'google' &&
+        AnalyticsProvider !== 'clarity' &&
+        AnalyticsProvider !== 'custom') ||
+      (AnalyticsScriptUrl !== undefined && typeof AnalyticsScriptUrl !== 'string') ||
+      (AnalyticsWebsiteId !== undefined && typeof AnalyticsWebsiteId !== 'string') ||
+      (AnalyticsCustomScript !== undefined && typeof AnalyticsCustomScript !== 'string')
     ) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
@@ -235,39 +272,43 @@ export async function POST(request: NextRequest) {
     }
 
     // 更新缓存中的站点设置
+    // API Base URL 统一去尾斜杠，避免运行时拼接路径出现 //
     adminConfig.SiteConfig = {
       SiteName,
       Announcement,
+      AnnouncementDisplayMode,
       SearchDownstreamMaxPage,
       SiteInterfaceCacheTime,
       DoubanProxyType,
-      DoubanProxy,
+      DoubanProxy: normalizeApiBaseUrl(DoubanProxy),
       DoubanImageProxyType,
-      DoubanImageProxy,
+      DoubanImageProxy: normalizeApiBaseUrl(DoubanImageProxy),
       DisableYellowFilter,
       FluidSearch,
       DanmakuSourceType,
-      DanmakuApiBase,
+      DanmakuApiBase: normalizeApiBaseUrl(DanmakuApiBase),
       DanmakuApiToken,
       DanmakuAutoLoadDefault,
       TMDBApiKey,
-      TMDBProxy,
-      TMDBReverseProxy,
+      TMDBProxy: normalizeApiBaseUrl(TMDBProxy),
+      TMDBReverseProxy: normalizeApiBaseUrl(TMDBReverseProxy),
+      TMDBImageBaseUrl: normalizeApiBaseUrl(TMDBImageBaseUrl),
       BangumiDataSource,
-      BangumiApiBaseUrl,
-      BangumiImageBaseUrl,
-      BangumiProxy,
+      BangumiApiBaseUrl: normalizeApiBaseUrl(BangumiApiBaseUrl),
+      BangumiImageBaseUrl: normalizeApiBaseUrl(BangumiImageBaseUrl),
+      BangumiProxy: normalizeApiBaseUrl(BangumiProxy),
+      LiveChartProxy: normalizeApiBaseUrl(LiveChartProxy),
       BannerDataSource,
       RecommendationDataSource,
-      PansouApiUrl,
+      PansouApiUrl: normalizeApiBaseUrl(PansouApiUrl),
       PansouUsername,
       PansouPassword,
       PansouKeywordBlocklist,
-      MagnetProxy,
-      MagnetMikanReverseProxy,
-      MagnetDmhyReverseProxy,
-      MagnetAcgripReverseProxy,
-      MagnetNyaaReverseProxy,
+      MagnetProxy: normalizeApiBaseUrl(MagnetProxy),
+      MagnetMikanReverseProxy: normalizeApiBaseUrl(MagnetMikanReverseProxy),
+      MagnetDmhyReverseProxy: normalizeApiBaseUrl(MagnetDmhyReverseProxy),
+      MagnetAcgripReverseProxy: normalizeApiBaseUrl(MagnetAcgripReverseProxy),
+      MagnetNyaaReverseProxy: normalizeApiBaseUrl(MagnetNyaaReverseProxy),
       EnableComments,
       CustomAdFilterCode,
       CustomAdFilterVersion,
@@ -281,7 +322,7 @@ export async function POST(request: NextRequest) {
       DefaultUserTags,
       EnableOIDCLogin,
       EnableOIDCRegistration,
-      OIDCIssuer,
+      OIDCIssuer: normalizeApiBaseUrl(OIDCIssuer),
       OIDCAuthorizationEndpoint,
       OIDCTokenEndpoint,
       OIDCUserInfoEndpoint,
@@ -289,6 +330,11 @@ export async function POST(request: NextRequest) {
       OIDCClientSecret,
       OIDCButtonText,
       OIDCMinTrustLevel,
+      AnalyticsEnabled,
+      AnalyticsProvider,
+      AnalyticsScriptUrl,
+      AnalyticsWebsiteId,
+      AnalyticsCustomScript,
     };
 
     // 写入数据库
