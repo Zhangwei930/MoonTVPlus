@@ -11,6 +11,9 @@ export enum UpdateStatus {
   FETCH_FAILED = 'fetch_failed', // 获取失败
 }
 
+// 是否启用自动更新检测（页面加载、登录页、注册页会调用）
+const AUTO_VERSION_CHECK_ENABLED = false;
+
 // 远程版本检查URL配置
 const VERSION_CHECK_URLS = [
   'https://raw.githubusercontent.com/mtvpls/MoonTVPlus/main/VERSION.txt',
@@ -21,6 +24,12 @@ const VERSION_CHECK_URLS = [
  * @returns Promise<UpdateStatus> - 返回版本检查状态
  */
 export async function checkForUpdates(): Promise<UpdateStatus> {
+  // 本站关闭自动更新检测：升级由本地构建流程控制，且大陆网络访问
+  // raw.githubusercontent.com 会稳定超时，白等 5 秒还报错。
+  if (!AUTO_VERSION_CHECK_ENABLED) {
+    return UpdateStatus.NO_UPDATE;
+  }
+
   try {
     // 尝试从主要URL获取版本信息
     const primaryVersion = await fetchVersionFromUrl(VERSION_CHECK_URLS[0]);
