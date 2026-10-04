@@ -1,0 +1,56 @@
+ARG NODE_VERSION=24.11.1
+# 服务器拉不到 Docker Hub 时，可换成镜像站地址并带上 @sha256 指纹（见 .deploy.env.example）
+ARG BASE_OS_IMAGE=ubuntu:22.04
+
+# 依赖基础镜像：只含运行环境和生产依赖，不含应用代码。
+# 由 deploy.sh --rebuild-base 在服务器上构建（原生依赖需要 Linux 版本），
+# 并以 pnpm-lock.yaml 的哈希作为 moontv.lock-sha256 标签；应用产物每次部署时用 Dockerfile.overlay 叠加。
+FROM ${BASE_OS_IMAGE} AS node-base
+ARG NODE_VERSION
+
+ENV PATH=/usr/local/lib/nodejs/bin:$PATH
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i \
+      -e 's@archive.ubuntu.com@mirrors.aliyun.com@g' \
+      -e 's@security.ubuntu.com@mirrors.aliyun.com@g' \
+      /etc/apt/sources.list \
+  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
+  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends ca-certificates curl xz-utils python3 make g++ git ffmpeg \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
+  && mkdir -p /usr/local/lib/nodejs \
+  && tar -xJf /tmp/node.tar.xz -C /usr/local/lib/nodejs --strip-components=1 \
+  && rm /tmp/node.tar.xz \
+  && corepack enable \
+  && corepack prepare pnpm@10.14.0 --activate \
+  && pnpm config set registry https://registry.npmmirror.com
+
+FROM node-base AS deps
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN pnpm install --prod --frozen-lockfile
+
+FROM node-base AS runner
+
+RUN groupadd -g 1001 nodejs \
+  && useradd -u 1001 -g nodejs -m -s /usr/sbin/nologin nextjs
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+ENV DOCKER_ENV=true
+ENV SQLITE_DB_PATH=/app/.data/moontv.db
+
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+
+RUN mkdir -p /app/.data && chown -R nextjs:nodejs /app/.data
+
+USER nextjs
+
+EXPOSE 3000
+
+CMD ["node", "start.js"]

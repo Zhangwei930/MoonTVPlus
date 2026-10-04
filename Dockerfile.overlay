@@ -1,0 +1,18 @@
+# 应用叠加层：在依赖基础镜像（Dockerfile.base）上放入本地预构建的 Next.js 产物和运行所需文件。
+# 构建上下文由 deploy.sh 打包上传，其中 .next/standalone 已剔除 node_modules（依赖来自基础镜像）。
+# 需要的文件与 Dockerfile.prebuilt 的 runner 阶段一致；先删掉基础镜像里可能残留的旧应用文件。
+ARG BASE_IMAGE=moontvplus:base
+FROM ${BASE_IMAGE}
+
+USER root
+RUN rm -rf /app/.next /app/public /app/scripts /app/migrations
+
+COPY --chown=nextjs:nodejs .next/standalone/ /app/
+COPY --chown=nextjs:nodejs .next/static /app/.next/static
+COPY --chown=nextjs:nodejs public /app/public
+COPY --chown=nextjs:nodejs scripts /app/scripts
+COPY --chown=nextjs:nodejs migrations /app/migrations
+COPY --chown=nextjs:nodejs start.js server.js /app/
+COPY --chown=nextjs:nodejs src/lib/tv-remote-hub.js /app/src/lib/tv-remote-hub.js
+
+USER nextjs
