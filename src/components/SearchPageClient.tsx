@@ -38,6 +38,11 @@ import {
   buildSearchEmptyActions,
   SearchEmptyAction,
 } from '@/lib/search-empty-actions';
+import {
+  buildSkippedSourcesSummary,
+  classifySkippedSource,
+  SkippedSource,
+} from '@/lib/skipped-sources';
 import { SearchResult } from '@/lib/types';
 import {
   appendSpecialSourceParam,
@@ -134,6 +139,9 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
   const eventSourceRef = useRef<EventSource | null>(null);
   const [totalSources, setTotalSources] = useState(0);
   const [completedSources, setCompletedSources] = useState(0);
+  // 本次搜索中被自动跳过（超时/失败）的源
+  const [skippedSources, setSkippedSources] = useState<SkippedSource[]>([]);
+  const [showSkippedDetail, setShowSkippedDetail] = useState(false);
   const pendingResultsRef = useRef<SearchResult[]>([]);
   const flushTimerRef = useRef<number | null>(null);
   const [useFluidSearch, setUseFluidSearch] = useState(true);
@@ -1316,6 +1324,8 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
       setTotalSources(0);
       setCompletedSources(0);
       setIsFromCache(false);
+      setSkippedSources([]);
+      setShowSkippedDetail(false);
       if (query) {
         setSearchQuery(query);
         setShowResults(true);
@@ -1376,6 +1386,8 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
       setSearchResults([]);
       setTotalSources(0);
       setCompletedSources(0);
+      setSkippedSources([]);
+      setShowSkippedDetail(false);
       // 清理缓冲
       pendingResultsRef.current = [];
       if (flushTimerRef.current) {
@@ -1450,6 +1462,14 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
               }
               case 'source_error':
                 setCompletedSources((prev) => prev + 1);
+                setSkippedSources((prev) => [
+                  ...prev,
+                  classifySkippedSource(
+                    payload.source || '',
+                    payload.sourceName || '',
+                    String(payload.error || '')
+                  ),
+                ]);
                 break;
               case 'complete':
                 setCompletedSources(payload.completedSources || totalSources);
@@ -1532,6 +1552,9 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
               setCachedResults(trimmed, results);
               setTotalSources(1);
               setCompletedSources(1);
+            }
+            if (Array.isArray(data.skipped_sources)) {
+              setSkippedSources(data.skipped_sources as SkippedSource[]);
             }
             setIsLoading(false);
           })
@@ -2210,6 +2233,26 @@ export function SearchPageClient({ searchBase = '/search' }: { searchBase?: stri
                               )}
                             </span>
                           )}
+                          {!isLoading &&
+                            buildSkippedSourcesSummary(skippedSources) && (
+                              <button
+                                type='button'
+                                onClick={() => setShowSkippedDetail((prev) => !prev)}
+                                className='self-start text-left text-amber-600 hover:underline dark:text-amber-400'
+                                title='点击查看被跳过的源'
+                              >
+                                {buildSkippedSourcesSummary(skippedSources)}
+                              </button>
+                            )}
+                          {!isLoading &&
+                            showSkippedDetail &&
+                            skippedSources.length > 0 && (
+                              <span className='font-normal text-gray-500 dark:text-gray-400'>
+                                {skippedSources
+                                  .map((s) => `${s.name}（${s.reason === 'timeout' ? '超时' : '失败'}）`)
+                                  .join('、')}
+                              </span>
+                            )}
                         </span>
                       </h2>
                     </div>

@@ -124,4 +124,103 @@ describe('admin health report', () => {
     expect(items.music.status).toBe('ok');
     expect(report.summary.error).toBe(0);
   });
+
+  describe('source quality group (24h)', () => {
+    const now = 1700000000000;
+    const HOUR = 60 * 60 * 1000;
+
+    const configWithHistory: AdminConfig = {
+      ...baseConfig,
+      SourceConfig: [
+        { key: 'fast', name: '快源', api: 'https://a.example.com', from: 'custom' },
+        { key: 'slow', name: '慢源', api: 'https://b.example.com', from: 'custom' },
+        { key: 'flaky', name: '不稳源', api: 'https://c.example.com', from: 'custom' },
+      ],
+      SourceCheckState: {
+        failures: {},
+        lastCheckTime: now,
+        history: {
+          fast: [
+            { t: now - HOUR, ok: true, ms: 100 },
+            { t: now, ok: true, ms: 200 },
+          ],
+          slow: [
+            { t: now - HOUR, ok: true, ms: 8000 },
+            { t: now, ok: true, ms: 6000 },
+          ],
+          flaky: [
+            { t: now - HOUR, ok: false },
+            { t: now, ok: false },
+          ],
+        },
+      },
+    };
+
+    it('ranks slowest sources by average latency', () => {
+      const report = buildAdminHealthReport(configWithHistory, {
+        storageType: 'redis',
+        now,
+      });
+      const items = Object.fromEntries(
+        report.groups.flatMap((group) =>
+          group.items.map((item) => [item.key, item])
+        )
+      );
+
+      expect(items.slowestSources).toBeDefined();
+      expect(items.slowestSources.details?.[0]).toContain('慢源');
+      expect(items.slowestSources.details?.[0]).toContain('7000');
+    });
+
+    it('ranks most failed sources and flags them as warning', () => {
+      const report = buildAdminHealthReport(configWithHistory, {
+        storageType: 'redis',
+        now,
+      });
+      const items = Object.fromEntries(
+        report.groups.flatMap((group) =>
+          group.items.map((item) => [item.key, item])
+        )
+      );
+
+      expect(items.mostFailedSources.status).toBe('warning');
+      expect(items.mostFailedSources.details?.[0]).toContain('不稳源');
+      expect(items.mostFailedSources.details?.[0]).toContain('2/2');
+    });
+
+    it('marks the group disabled when no history exists', () => {
+      const report = buildAdminHealthReport(baseConfig, {
+        storageType: 'redis',
+        now,
+      });
+      const items = Object.fromEntries(
+        report.groups.flatMap((group) =>
+          group.items.map((item) => [item.key, item])
+        )
+      );
+
+      expect(items.slowestSources.status).toBe('disabled');
+      expect(items.mostFailedSources.status).toBe('disabled');
+    });
+
+    it('shows top failing image domains when provided via options', () => {
+      const report = buildAdminHealthReport(baseConfig, {
+        storageType: 'redis',
+        now,
+        imageFailureTop: [
+          { domain: 'img.bad.com', count: 42 },
+          { domain: 'cdn.dead.net', count: 7 },
+        ],
+      });
+      const items = Object.fromEntries(
+        report.groups.flatMap((group) =>
+          group.items.map((item) => [item.key, item])
+        )
+      );
+
+      expect(items.imageFailureDomains.status).toBe('warning');
+      expect(items.imageFailureDomains.details?.[0]).toContain('img.bad.com');
+      expect(items.imageFailureDomains.details?.[0]).toContain('42');
+    });
+  });
 });

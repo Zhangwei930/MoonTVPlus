@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { mapInBatches, SEARCH_SOURCE_BATCH_SIZE } from '@/lib/batch';
+import { createCompletionTracker } from '@/lib/completion-tracker';
 import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import { hasFeaturePermission } from '@/lib/permissions';
@@ -121,13 +123,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      const totalSourceCount = sortedApiSites.length + (hasOpenList ? 1 : 0) + embySourcesCount + enabledScripts.length;
-
       // 发送开始事件
       const startEvent = `data: ${JSON.stringify({
         type: 'start',
         query,
-        totalSources: totalSourceCount,
+        totalSources: sortedApiSites.length + (hasOpenList ? 1 : 0) + embySourcesCount + enabledScripts.length,
         timestamp: Date.now()
       })}\n\n`;
 
@@ -135,19 +135,18 @@ export async function GET(request: NextRequest) {
         return; // 连接已关闭，提前退出
       }
 
-      // 记录已完成的源数量
-      let completedSources = 0;
+      // 记录已完成的源数量；所有源（含 OpenList/Emby）完成后统一发送 complete
       const allResults: any[] = [];
-
-      const maybeComplete = () => {
-        if (completedSources !== totalSourceCount || streamClosed) return;
+      const totalSourcesCount =
+        sortedApiSites.length + (hasOpenList ? 1 : 0) + embySourcesCount + enabledScripts.length;
+      const tracker = createCompletionTracker(totalSourcesCount, () => {
+        if (streamClosed) return;
         const completeEvent = `data: ${JSON.stringify({
           type: 'complete',
           totalResults: allResults.length,
-          completedSources,
+          completedSources: tracker.completed,
           timestamp: Date.now()
         })}\n\n`;
-
         if (safeEnqueue(encoder.encode(completeEvent))) {
           streamClosed = true;
           try {
@@ -156,12 +155,9 @@ export async function GET(request: NextRequest) {
             console.warn('Failed to close controller:', error);
           }
         }
-      };
-
-      if (totalSourceCount === 0) {
-        maybeComplete();
-        return;
-      }
+      });
+      // 一个源都没有时直接完成，避免前端一直加载中
+      tracker.checkNow();
 
       // 搜索 Emby（如果配置了）- 异步带超时，支持多源
       if (hasEmby) {
@@ -206,9 +202,9 @@ export async function GET(request: NextRequest) {
                   douban_id: 0,
                 }));
 
-                // 单独发送每个源的结果
+                // 先发送该源的结果并写入 allResults，最后才计数——
+                // increment 可能同步触发 complete 并关闭流
                 embyCompletedCount++;
-                completedSources++;
                 if (!streamClosed) {
                   const sourceEvent = `data: ${JSON.stringify({
                     type: 'source_result',
@@ -225,27 +221,26 @@ export async function GET(request: NextRequest) {
                     streamClosed = true;
                   }
                 }
-                maybeComplete();
+                tracker.increment();
 
                 return results;
               } catch (error) {
                 console.error(`[Search WS] 搜索 ${embyConfig.name} 失败:`, error);
                 embyCompletedCount++;
-                completedSources++;
-                // 发送空结果
+                // 发送源错误事件，让用户知道该源被跳过
                 if (!streamClosed) {
                   const sourceValue = embySources.length === 1 ? 'emby' : `emby_${embyConfig.key}`;
                   const sourceName = embySources.length === 1 ? 'Emby' : embyConfig.name;
-                  const sourceEvent = `data: ${JSON.stringify({
-                    type: 'source_result',
+                  const errorEvent = `data: ${JSON.stringify({
+                    type: 'source_error',
                     source: sourceValue,
                     sourceName: sourceName,
-                    results: [],
+                    error: error instanceof Error ? error.message : '搜索失败',
                     timestamp: Date.now()
                   })}\n\n`;
-                  safeEnqueue(encoder.encode(sourceEvent));
+                  safeEnqueue(encoder.encode(errorEvent));
                 }
-                maybeComplete();
+                tracker.increment();
                 return [];
               }
             });
@@ -253,21 +248,21 @@ export async function GET(request: NextRequest) {
             await Promise.all(embySearchPromises);
           } catch (error) {
             console.error('[Search WS] 搜索 Emby 整体失败:', error);
-            // 如果整个 emby 搜索失败，需要补齐未完成的源
+          } finally {
+            // 无论成功失败，都把未计数的 Emby 源补齐，保证 complete 一定会发出
             const remainingSources = embySourcesCount - embyCompletedCount;
             for (let i = 0; i < remainingSources; i++) {
-              completedSources++;
               if (!streamClosed) {
-                const sourceEvent = `data: ${JSON.stringify({
-                  type: 'source_result',
+                const errorEvent = `data: ${JSON.stringify({
+                  type: 'source_error',
                   source: 'emby',
                   sourceName: 'Emby',
-                  results: [],
+                  error: '搜索失败',
                   timestamp: Date.now()
                 })}\n\n`;
-                safeEnqueue(encoder.encode(sourceEvent));
+                safeEnqueue(encoder.encode(errorEvent));
               }
-              maybeComplete();
+              tracker.increment();
             }
           }
         })();
@@ -319,7 +314,8 @@ export async function GET(request: NextRequest) {
               return [];
             } catch (error) {
               console.error('[Search WS] 搜索 OpenList 失败:', error);
-              return [];
+              // 抛出让外层 catch 发送 source_error，用户能看到该源被跳过
+              throw error;
             }
           })(),
           new Promise((_, reject) =>
@@ -327,7 +323,6 @@ export async function GET(request: NextRequest) {
           ),
         ])
           .then((openlistResults: any) => {
-            completedSources++;
             if (!streamClosed) {
               // 添加安全检查，确保结果是数组
               const safeResults = Array.isArray(openlistResults) ? openlistResults : [];
@@ -338,35 +333,34 @@ export async function GET(request: NextRequest) {
                 results: safeResults,
                 timestamp: Date.now()
               })}\n\n`;
-              if (!safeEnqueue(encoder.encode(sourceEvent))) {
+              if (safeEnqueue(encoder.encode(sourceEvent))) {
+                if (safeResults.length > 0) {
+                  allResults.push(...safeResults);
+                }
+              } else {
                 streamClosed = true;
-                return;
-              }
-              if (safeResults.length > 0) {
-                allResults.push(...safeResults);
               }
             }
-            maybeComplete();
+            tracker.increment();
           })
           .catch((error) => {
-            console.error('[Search WS] 搜索 OpenList 超时:', error);
-            completedSources++;
+            console.error('[Search WS] 搜索 OpenList 失败/超时:', error);
             if (!streamClosed) {
-              const sourceEvent = `data: ${JSON.stringify({
-                type: 'source_result',
+              const errorEvent = `data: ${JSON.stringify({
+                type: 'source_error',
                 source: 'openlist',
                 sourceName: '私人影库',
-                results: [],
+                error: error instanceof Error ? error.message : '搜索失败',
                 timestamp: Date.now()
               })}\n\n`;
-              safeEnqueue(encoder.encode(sourceEvent));
+              safeEnqueue(encoder.encode(errorEvent));
             }
-            maybeComplete();
+            tracker.increment();
           });
       }
 
-      // 为每个源创建搜索 Promise
-      const searchPromises = sortedApiSites.map(async (site) => {
+      // CMS 源按权重降序分批并发查询，避免全量并发压垮服务器和第三方源
+      const runApiSiteSearch = async (site: (typeof sortedApiSites)[number]) => {
         try {
           // 添加超时控制
           const searchPromise = Promise.race([
@@ -395,9 +389,8 @@ export async function GET(request: NextRequest) {
             weight: result.weight ?? (weightMap.get(result.source) ?? 0),
           }));
 
-          // 发送该源的搜索结果
-          completedSources++;
-
+          // 先发送该源的结果并写入 allResults，最后才计数——
+          // increment 可能同步触发 complete 并关闭流
           if (!streamClosed) {
             const sourceEvent = `data: ${JSON.stringify({
               type: 'source_result',
@@ -409,6 +402,7 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(sourceEvent))) {
               streamClosed = true;
+              tracker.increment();
               return; // 连接已关闭，停止处理
             }
           }
@@ -417,12 +411,11 @@ export async function GET(request: NextRequest) {
             allResults.push(...filteredResults);
           }
 
+          tracker.increment();
         } catch (error) {
           console.warn(`搜索失败 ${site.name}:`, error);
 
           // 发送源错误事件
-          completedSources++;
-
           if (!streamClosed) {
             const errorEvent = `data: ${JSON.stringify({
               type: 'source_error',
@@ -434,34 +427,18 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(errorEvent))) {
               streamClosed = true;
+              tracker.increment();
               return; // 连接已关闭，停止处理
             }
           }
+          tracker.increment();
         }
-
-        // 检查是否所有源都已完成
-        if (completedSources === totalSourceCount) {
-          if (!streamClosed) {
-            // 发送最终完成事件
-            const completeEvent = `data: ${JSON.stringify({
-              type: 'complete',
-              totalResults: allResults.length,
-              completedSources,
-              timestamp: Date.now()
-            })}\n\n`;
-
-            if (safeEnqueue(encoder.encode(completeEvent))) {
-              // 只有在成功发送完成事件后才关闭流
-              streamClosed = true;
-              try {
-                controller.close();
-              } catch (error) {
-                console.warn('Failed to close controller:', error);
-              }
-            }
-          }
-        }
-      });
+      };
+      const cmsSearchPromise = mapInBatches(
+        sortedApiSites,
+        SEARCH_SOURCE_BATCH_SIZE,
+        runApiSiteSearch
+      );
 
       const scriptPromises = enabledScripts.map(async (script) => {
         try {
@@ -512,8 +489,6 @@ export async function GET(request: NextRequest) {
             });
           }
 
-          completedSources++;
-
           if (!streamClosed) {
             const sourceEvent = `data: ${JSON.stringify({
               type: 'source_result',
@@ -525,6 +500,7 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(sourceEvent))) {
               streamClosed = true;
+              tracker.increment();
               return;
             }
           }
@@ -532,10 +508,10 @@ export async function GET(request: NextRequest) {
           if (filteredResults.length > 0) {
             allResults.push(...filteredResults);
           }
+
+          tracker.increment();
         } catch (error) {
           console.warn(`搜索脚本失败 ${script.name}:`, error);
-
-          completedSources++;
 
           if (!streamClosed) {
             const errorEvent = `data: ${JSON.stringify({
@@ -548,34 +524,16 @@ export async function GET(request: NextRequest) {
 
             if (!safeEnqueue(encoder.encode(errorEvent))) {
               streamClosed = true;
+              tracker.increment();
               return;
             }
           }
-        }
-
-        if (completedSources === totalSourceCount) {
-          if (!streamClosed) {
-            const completeEvent = `data: ${JSON.stringify({
-              type: 'complete',
-              totalResults: allResults.length,
-              completedSources,
-              timestamp: Date.now()
-            })}\n\n`;
-
-            if (safeEnqueue(encoder.encode(completeEvent))) {
-              streamClosed = true;
-              try {
-                controller.close();
-              } catch (error) {
-                console.warn('Failed to close controller:', error);
-              }
-            }
-          }
+          tracker.increment();
         }
       });
 
       // 等待所有搜索完成
-      await Promise.allSettled([...searchPromises, ...scriptPromises]);
+      await Promise.allSettled([cmsSearchPromise, ...scriptPromises]);
     },
 
     cancel() {
