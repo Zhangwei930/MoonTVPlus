@@ -3,10 +3,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { mapInBatches, SEARCH_SOURCE_BATCH_SIZE } from '@/lib/batch';
+import { buildPrivateCacheHeaders } from '@/lib/cache-headers';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import { getProxyToken } from '@/lib/emby-token';
 import { hasFeaturePermission } from '@/lib/permissions';
+import {
+  classifySkippedSource,
+  SkippedSource,
+} from '@/lib/skipped-sources';
 import {
   executeSavedSourceScript,
   listEnabledSourceScripts,
@@ -25,7 +31,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const query = searchParams.get('q');
-  const includeSpecialSources = searchParams.get('special') === '1';
+  const specialOnly = searchParams.get('special') === '1';
   const privateOnly = searchParams.get('privateOnly') === '1';
 
   if (!query) {
@@ -33,24 +39,24 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { results: [] },
       {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
+        headers: buildPrivateCacheHeaders(cacheTime),
       }
     );
   }
 
   const config = await getConfig();
+  const skippedSources: SkippedSource[] = [];
   const apiSites = privateOnly
     ? []
-    : await getAvailableApiSites(authInfo.username, includeSpecialSources);
-  const [canAccessOpenList, canAccessEmby] = await Promise.all([
+    : await getAvailableApiSites(authInfo.username, specialOnly);
+  const [hasOpenListPermission, hasEmbyPermission] = await Promise.all([
     hasFeaturePermission(authInfo.username, 'private_library'),
     hasFeaturePermission(authInfo.username, 'emby'),
   ]);
+  // 特殊源入口（/under）只搜影视源：私人影库（OpenList/Emby）不参与搜索。
+  // 否则 0 个特殊源时也会去搜私人影库，既串味又要白等 20s 超时。
+  const canAccessOpenList = hasOpenListPermission && !specialOnly;
+  const canAccessEmby = hasEmbyPermission && !specialOnly;
 
   // 创建权重映射表
   const weightMap = new Map<string, number>();
@@ -111,14 +117,21 @@ export async function GET(request: NextRequest) {
           }));
         } catch (error) {
           console.error(`[Search] 搜索 ${embyConfig.name} 失败:`, error);
-          return [];
+          throw error;
         }
       })(),
       new Promise<any[]>((_, reject) =>
         setTimeout(() => reject(new Error(`${embyConfig.name} timeout`)), 20000)
       ),
     ]).catch((error) => {
-      console.error(`[Search] 搜索 ${embyConfig.name} 超时:`, error);
+      console.error(`[Search] 搜索 ${embyConfig.name} 失败/超时:`, error);
+      skippedSources.push(
+        classifySkippedSource(
+          embySources.length === 1 ? 'emby' : `emby_${embyConfig.key}`,
+          embySources.length === 1 ? 'Emby' : embyConfig.name,
+          String(error?.message || error)
+        )
+      );
       return [];
     })
   );
@@ -169,29 +182,46 @@ export async function GET(request: NextRequest) {
             return [];
           } catch (error) {
             console.error('[Search] 搜索 OpenList 失败:', error);
-            return [];
+            throw error;
           }
         })(),
         new Promise<any[]>((_, reject) =>
           setTimeout(() => reject(new Error('OpenList timeout')), 20000)
         ),
       ]).catch((error) => {
-        console.error('[Search] 搜索 OpenList 超时:', error);
+        console.error('[Search] 搜索 OpenList 失败/超时:', error);
+        skippedSources.push(
+          classifySkippedSource(
+            'openlist',
+            '私人影库',
+            String(error?.message || error)
+          )
+        );
         return [];
       })
     : Promise.resolve([]);
 
-  // 添加超时控制和错误处理，避免慢接口拖累整体响应
-  const searchPromises = apiSites.map((site) =>
-    Promise.race([
-      searchFromApi(site, query),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
-      ),
-    ]).catch((err) => {
-      console.warn(`搜索失败 ${site.name}:`, err.message);
-      return []; // 返回空数组而不是抛出错误
-    })
+  // 按权重降序、分批并发查询 CMS 源，避免全量并发压垮服务器和第三方源；
+  // 每个源带超时控制，慢接口不拖累整体响应
+  const sortedApiSites = [...apiSites].sort(
+    (a, b) => (weightMap.get(b.key) ?? 0) - (weightMap.get(a.key) ?? 0)
+  );
+  const cmsSearchPromise = mapInBatches(
+    sortedApiSites,
+    SEARCH_SOURCE_BATCH_SIZE,
+    (site) =>
+      Promise.race([
+        searchFromApi(site, query),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
+        ),
+      ]).catch((err) => {
+        console.warn(`搜索失败 ${site.name}:`, err.message);
+        skippedSources.push(
+          classifySkippedSource(site.key, site.name, String(err.message))
+        );
+        return []; // 返回空数组而不是抛出错误
+      })
   );
 
   const scriptSummaries = privateOnly ? [] : await listEnabledSourceScripts();
@@ -231,34 +261,38 @@ export async function GET(request: NextRequest) {
           return searchResults.flat();
         } catch (error) {
           console.error(`[Search] 搜索脚本 ${script.name} 失败:`, error);
-          return [];
+          throw error;
         }
       })(),
       new Promise<any[]>((_, reject) =>
         setTimeout(() => reject(new Error(`${script.name} timeout`)), 20000)
       ),
     ]).catch((error) => {
-      console.error(`[Search] 搜索脚本 ${script.name} 超时:`, error);
+      console.error(`[Search] 搜索脚本 ${script.name} 失败/超时:`, error);
+      skippedSources.push(
+        classifySkippedSource(
+          `script:${script.key}`,
+          script.name,
+          String(error?.message || error)
+        )
+      );
       return [];
     })
   );
 
   try {
-    const allResults = await Promise.all([
-      openlistPromise,
-      ...embyPromises,
-      ...searchPromises,
-      ...scriptPromises,
-    ]);
+    const [rawOpenlistResults, embyResultsArray, apiResults, scriptResults] =
+      await Promise.all([
+        openlistPromise,
+        Promise.all(embyPromises),
+        cmsSearchPromise,
+        Promise.all(scriptPromises),
+      ]);
 
-    // 分离结果：第一个是 openlist，接下来是 emby 结果，最后是 api 结果
     // 添加安全检查，确保即使某个结果处理出错也不影响其他结果
-    const openlistResults = Array.isArray(allResults[0]) ? allResults[0] : [];
-    const embyResultsArray = allResults.slice(1, 1 + embyPromises.length);
-    const apiResults = allResults.slice(1 + embyPromises.length, 1 + embyPromises.length + searchPromises.length);
-    const scriptResults = allResults.slice(1 + embyPromises.length + searchPromises.length);
-
-    // 合并所有 Emby 结果，添加安全检查
+    const openlistResults = Array.isArray(rawOpenlistResults)
+      ? rawOpenlistResults
+      : [];
     const embyResults = embyResultsArray.filter(Array.isArray).flat();
     const apiResultsFlat = apiResults.filter(Array.isArray).flat();
     const scriptResultsFlat = scriptResults.filter(Array.isArray).flat();
@@ -288,18 +322,16 @@ export async function GET(request: NextRequest) {
 
     if (flattenedResults.length === 0) {
       // no cache if empty
-      return NextResponse.json({ results: [] }, { status: 200 });
+      return NextResponse.json(
+        { results: [], skipped_sources: skippedSources },
+        { status: 200 }
+      );
     }
 
     return NextResponse.json(
-      { results: flattenedResults },
+      { results: flattenedResults, skipped_sources: skippedSources },
       {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
+        headers: buildPrivateCacheHeaders(cacheTime),
       }
     );
   } catch (error) {

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { buildAdminHealthReport } from '@/lib/admin-health';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
+import { getTopImageFailureDomains } from '@/lib/image-failure-stats';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,7 +41,10 @@ export async function GET(request: NextRequest) {
     }
 
     const config = await getConfig();
-    const report = buildAdminHealthReport(config, { storageType });
+    const report = buildAdminHealthReport(config, {
+      storageType,
+      imageFailureTop: getTopImageFailureDomains(5),
+    });
 
     return NextResponse.json(report, {
       headers: {
